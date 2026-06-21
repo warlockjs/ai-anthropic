@@ -1,0 +1,39 @@
+{
+  "name": "@warlock.js/ai-anthropic",
+  "version": "4.2.11",
+  "type": "module",
+  "description": "Anthropic SDK adapter for @warlock.js/ai",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "typings": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "warlock",
+    "ai",
+    "anthropic",
+    "claude"
+  ],
+  "author": "Hasan Zohdy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/warlockjs/ai-anthropic"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.4"
+  },
+  "peerDependencies": {
+    "@warlock.js/ai": "*"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
+    "@warlock.js/logger": "*"
+  }
+}
