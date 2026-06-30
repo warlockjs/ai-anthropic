@@ -141,6 +141,22 @@ function toAnthropicContentBlock(part: ContentPart): Anthropic.ContentBlockParam
     return { type: "text", text: part.text };
   }
 
+  // PDF → Anthropic `document` block (A2). The Messages API accepts a
+  // url or base64 `application/pdf` source on PDF-capable Claude models.
+  if (part.type === "pdf") {
+    const source =
+      "url" in part.source
+        ? { type: "url", url: part.source.url }
+        : { type: "base64", media_type: "application/pdf", data: part.source.base64 };
+    return { type: "document", source } as unknown as Anthropic.ContentBlockParam;
+  }
+
+  // Anthropic has no audio content block; the agent's capability gate
+  // normally prevents this, but stay loud rather than mis-map it.
+  if (part.type === "audio") {
+    throw new Error("Anthropic adapter: audio attachments are not supported");
+  }
+
   if ("url" in part.source) {
     return { type: "image", source: { type: "url", url: part.source.url } };
   }

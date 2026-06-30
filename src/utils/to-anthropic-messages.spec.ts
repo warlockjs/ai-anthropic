@@ -106,6 +106,41 @@ describe("toAnthropicMessages", () => {
     ]);
   });
 
+  it("maps a pdf part into an Anthropic document block (A2)", () => {
+    const messages: Message[] = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Summarize" },
+          { type: "pdf", source: { base64: "JVBERi0=", mediaType: "application/pdf" } },
+        ],
+      },
+    ];
+
+    expect(toAnthropicMessages(messages).messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Summarize" },
+          {
+            type: "document",
+            source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("maps a pdf URL into a document url source (A2)", () => {
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "pdf", source: { url: "https://x/r.pdf" } }] },
+    ];
+
+    expect(toAnthropicMessages(messages).messages[0].content).toEqual([
+      { type: "document", source: { type: "url", url: "https://x/r.pdf" } },
+    ]);
+  });
+
   it("renders inline base64 image sources as base64 blocks", () => {
     const messages: Message[] = [
       {

@@ -44,12 +44,15 @@ export class AnthropicSDK implements SDKAdapterContract {
   private readonly pricing?: Record<string, ModelPricing>;
 
   public constructor(config: AnthropicSDKConfig) {
-    this.client = new Anthropic({
-      apiKey: config.apiKey,
-      baseURL: config.baseURL,
-    });
-    this.provider = config.provider ?? "anthropic";
-    this.pricing = config.pricing;
+    // Peel off the framework-only keys and forward every other upstream
+    // `ClientOptions` (timeout, maxRetries, defaultHeaders, fetch, …) verbatim
+    // — they type-check, so dropping them is a silent footgun. Mirrors the
+    // Bedrock/Google/Ollama adapters.
+    const { provider, pricing, ...clientOptions } = config;
+
+    this.client = new Anthropic(clientOptions);
+    this.provider = provider ?? "anthropic";
+    this.pricing = pricing;
   }
 
   /**
