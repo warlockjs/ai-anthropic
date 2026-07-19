@@ -42,7 +42,7 @@ const MIN_THINKING_BUDGET = 1024;
  * neutral levels translate to representative token budgets when the
  * caller doesn't pass an explicit `reasoning.maxTokens`.
  */
-const EFFORT_THINKING_BUDGET: Record<ReasoningEffort, number> = {
+const EFFORT_THINKING_BUDGET: Record<Exclude<ReasoningEffort, "none">, number> = {
   low: 1024,
   medium: 4096,
   high: 12000,
@@ -377,12 +377,21 @@ export class AnthropicModel implements ModelContract {
    * Budget resolution: an explicit `reasoning.maxTokens` wins; otherwise
    * the neutral `effort` level maps to a tiered token budget. Anthropic
    * requires `budget_tokens` ≥ 1024, so the budget is floored at that
-   * minimum.
+   * minimum. The neutral `effort: "none"` ("run without reasoning") maps
+   * to no `thinking` block at all — extended thinking is opt-in here.
    */
   private buildThinking(
     reasoning: ModelCallOptions["reasoning"],
   ): { thinking?: Anthropic.ThinkingConfigParam } {
     if (!this.capabilities.reasoning || !reasoning) {
+      return {};
+    }
+
+    // `effort: "none"` is an explicit "run without reasoning". Anthropic
+    // has no reasoning-off effort knob — extended thinking is opt-in — so
+    // we simply omit the `thinking` block. (This also short-circuits the
+    // `EFFORT_THINKING_BUDGET["none"]` → `undefined` → `NaN` budget path.)
+    if (reasoning.effort === "none") {
       return {};
     }
 

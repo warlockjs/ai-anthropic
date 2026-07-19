@@ -573,6 +573,28 @@ describe("AnthropicModel.complete()", () => {
     expect(calls[0].params.temperature).toBeUndefined();
   });
 
+  it("omits thinking when effort is 'none' (explicit reasoning-off)", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    await model.complete([{ role: "user", content: "hi" }], {
+      reasoning: { effort: "none" },
+    });
+
+    expect("thinking" in calls[0].params).toBe(false);
+  });
+
+  it("treats effort 'none' as authoritative over an explicit maxTokens", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    await model.complete([{ role: "user", content: "hi" }], {
+      reasoning: { effort: "none", maxTokens: 8000 },
+    });
+
+    expect("thinking" in calls[0].params).toBe(false);
+  });
+
   it("places a cache_control breakpoint on the system prompt when breakpoints >= 1", async () => {
     const { client, calls } = makeFakeClient({ message: message() });
     const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });

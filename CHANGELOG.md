@@ -4,6 +4,12 @@ All notable changes to `@warlock.js/ai-anthropic` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). `@warlock.js/*` packages are released in lockstep — every package shares the same version number, so a version below may list only the changes that affected this package.
 
+## 4.8.0 - 2026-07-19
+
+### Changed
+
+- **`reasoning: { effort: "none" }`** disables extended thinking (emits no `thinking` block) — the neutral "run without reasoning" level, consistent across adapters.
+
 ## 4.5.0 - 2026-07-01
 
 ### Fixed
