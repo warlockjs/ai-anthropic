@@ -1,6 +1,6 @@
 {
   "name": "@warlock.js/ai-anthropic",
-  "version": "5.2.2",
+  "version": "5.2.3",
   "type": "module",
   "description": "Anthropic SDK adapter for @warlock.js/ai",
   "main": "./src/index.ts",
