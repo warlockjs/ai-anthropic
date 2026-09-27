@@ -81,6 +81,8 @@ In streaming, `cachedTokens` / `cacheWriteTokens` are seeded from `message_start
 
 Unlike OpenAI, Anthropic **requires** `max_tokens` on every request. Resolution: per-call `options.maxTokens` > `config.maxTokens` > **default `4096`**. A caller who never sets a cap still gets a complete answer instead of a 400.
 
+With extended thinking enabled and no explicit cap, the adapter reserves answer room: `max_tokens = thinking budget + 4096`. An explicit `maxTokens` must be greater than the thinking budget or the call throws before it reaches Anthropic.
+
 ## System prompt
 
 Anthropic has no `"system"` role inside `messages`. The adapter hoists every neutral `role: "system"` message into the top-level `system` parameter (multiple system messages join with a blank line). Transparent to the agent.
@@ -111,6 +113,8 @@ Because Anthropic 400s when `thinking` is combined with an explicit `temperature
 await agent.execute("Prove it.", { reasoning: { effort: "high" } });   // budget_tokens: 12000
 await model.complete(messages, { reasoning: { maxTokens: 8000 } });     // budget_tokens: 8000
 ```
+
+When a thinking-enabled response also makes tool calls, its signed `thinking` and `redacted_thinking` blocks are retained in each call's `providerMetadata.anthropic.thinkingBlocks`. The adapter replays those opaque blocks automatically on the next assistant turn, preserving Anthropic's required signatures; application code should leave that metadata intact when persisting message history.
 
 ## Prompt caching (`cache_control`)
 
