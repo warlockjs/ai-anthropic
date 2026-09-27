@@ -1,4 +1,4 @@
-import type { ContentPart, Message } from "@warlock.js/ai";
+import type { ContentPart, Message, ModelToolCallRequest } from "@warlock.js/ai";
 import type Anthropic from "@anthropic-ai/sdk";
 
 /**
@@ -71,7 +71,7 @@ export function toAnthropicMessages(messages: Message[]): AnthropicMessages {
     }
 
     if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
-      const blocks: Anthropic.ContentBlockParam[] = [];
+      const blocks: Anthropic.ContentBlockParam[] = extractThinkingBlocks(message.toolCalls);
       const text = stringifyContent(message.content);
 
       if (text) {
@@ -111,6 +111,49 @@ export function toAnthropicMessages(messages: Message[]): AnthropicMessages {
     system: systemParts.length > 0 ? systemParts.join("\n\n") : undefined,
     messages: mapped,
   };
+}
+
+/**
+ * Recover signed extended-thinking blocks stored by this adapter on a tool
+ * request. Anthropic requires these blocks to be replayed before the
+ * assistant's text and tool uses on the following request.
+ */
+function extractThinkingBlocks(toolCalls: ModelToolCallRequest[]): Anthropic.ContentBlockParam[] {
+  for (const toolCall of toolCalls) {
+    const anthropic = toolCall.providerMetadata?.anthropic;
+
+    if (!isRecord(anthropic) || !Array.isArray(anthropic.thinkingBlocks)) {
+      continue;
+    }
+
+    return anthropic.thinkingBlocks.flatMap(toAnthropicThinkingBlock);
+  }
+
+  return [];
+}
+
+function toAnthropicThinkingBlock(block: unknown): Anthropic.ContentBlockParam[] {
+  if (!isRecord(block) || typeof block.type !== "string") {
+    return [];
+  }
+
+  if (
+    block.type === "thinking" &&
+    typeof block.thinking === "string" &&
+    typeof block.signature === "string"
+  ) {
+    return [{ type: "thinking", thinking: block.thinking, signature: block.signature }];
+  }
+
+  if (block.type === "redacted_thinking" && typeof block.data === "string") {
+    return [{ type: "redacted_thinking", data: block.data }];
+  }
+
+  return [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 /**

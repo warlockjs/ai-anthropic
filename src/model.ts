@@ -48,6 +48,8 @@ const EFFORT_THINKING_BUDGET: Record<Exclude<ReasoningEffort, "none">, number> =
   high: 12000,
 };
 
+type AnthropicThinkingBlock = Anthropic.ThinkingBlock | Anthropic.RedactedThinkingBlock;
+
 /**
  * Anthropic-backed implementation of `ModelContract`.
  *
@@ -204,6 +206,7 @@ export class AnthropicModel implements ModelContract {
     let rawStopReason: string | null = null;
     const usage: Usage = { input: 0, output: 0, total: 0 };
     const toolBlocks = new Map<number, { id: string; name: string; json: string }>();
+    const thinkingBlocks = new Map<number, AnthropicThinkingBlock>();
 
     try {
       for await (const event of stream as AsyncIterable<Anthropic.RawMessageStreamEvent>) {
@@ -230,6 +233,10 @@ export class AnthropicModel implements ModelContract {
 
           if (block.type === "tool_use") {
             toolBlocks.set(event.index, { id: block.id, name: block.name, json: "" });
+          } else if (block.type === "thinking") {
+            thinkingBlocks.set(event.index, { ...block });
+          } else if (block.type === "redacted_thinking") {
+            thinkingBlocks.set(event.index, { ...block });
           }
 
           continue;
@@ -243,6 +250,18 @@ export class AnthropicModel implements ModelContract {
 
             if (accumulator) {
               accumulator.json += event.delta.partial_json;
+            }
+          } else if (event.delta.type === "thinking_delta") {
+            const thinking = thinkingBlocks.get(event.index);
+
+            if (thinking?.type === "thinking") {
+              thinking.thinking += event.delta.thinking;
+            }
+          } else if (event.delta.type === "signature_delta") {
+            const thinking = thinkingBlocks.get(event.index);
+
+            if (thinking?.type === "thinking") {
+              thinking.signature += event.delta.signature;
             }
           }
 
@@ -258,6 +277,11 @@ export class AnthropicModel implements ModelContract {
               id: accumulator.id,
               name: accumulator.name,
               input: safeJsonParse<Record<string, unknown>>(accumulator.json, {}),
+              ...this.buildThinkingMetadata(
+                Array.from(thinkingBlocks.entries())
+                  .sort(([left], [right]) => left - right)
+                  .map(([, block]) => block),
+              ),
             };
 
             toolBlocks.delete(event.index);
@@ -320,10 +344,22 @@ export class AnthropicModel implements ModelContract {
     const { system, messages: anthropicMessages } = toAnthropicMessages(messages);
     const thinking = this.buildThinking(options?.reasoning);
     const temperature = options?.temperature ?? this.config.temperature;
+    const configuredMaxTokens = options?.maxTokens ?? this.config.maxTokens;
+    const thinkingBudget =
+      thinking.thinking?.type === "enabled" ? thinking.thinking.budget_tokens : undefined;
+    const maxTokens =
+      configuredMaxTokens ??
+      (thinkingBudget !== undefined ? thinkingBudget + DEFAULT_MAX_TOKENS : DEFAULT_MAX_TOKENS);
+
+    if (thinkingBudget !== undefined && configuredMaxTokens !== undefined && configuredMaxTokens <= thinkingBudget) {
+      throw new Error(
+        `Anthropic maxTokens (${configuredMaxTokens}) must be greater than thinking budget_tokens (${thinkingBudget})`,
+      );
+    }
 
     return {
       model: this.name,
-      max_tokens: options?.maxTokens ?? this.config.maxTokens ?? DEFAULT_MAX_TOKENS,
+      max_tokens: maxTokens,
       messages: anthropicMessages,
       ...this.buildSystem(system, options?.cacheControl),
       // Extended thinking pins sampling to the default temperature —
@@ -495,11 +531,33 @@ export class AnthropicModel implements ModelContract {
       return undefined;
     }
 
+    const thinkingMetadata = this.buildThinkingMetadata(content);
+
     return toolUses.map((block) => ({
       id: block.id,
       name: block.name,
       input: (block.input ?? {}) as Record<string, unknown>,
+      ...thinkingMetadata,
     }));
+  }
+
+  /**
+   * Preserve Anthropic's opaque extended-thinking blocks beside a tool
+   * request so the next assistant turn can replay their signatures exactly.
+   */
+  private buildThinkingMetadata(
+    blocks: Iterable<Anthropic.ContentBlock>,
+  ): { providerMetadata?: Record<string, unknown> } {
+    const thinkingBlocks = Array.from(blocks).filter(
+      (block): block is AnthropicThinkingBlock =>
+        block.type === "thinking" || block.type === "redacted_thinking",
+    );
+
+    if (thinkingBlocks.length === 0) {
+      return {};
+    }
+
+    return { providerMetadata: { anthropic: { thinkingBlocks } } };
   }
 
   /**

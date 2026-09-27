@@ -152,6 +152,74 @@ describe("AnthropicModel.complete()", () => {
     ]);
   });
 
+  it("round-trips signed thinking blocks before a tool-use follow-up", async () => {
+    const { client, calls } = makeFakeClient({
+      message: message({
+        stop_reason: "tool_use",
+        content: [
+          { type: "thinking", thinking: "I should look this up.", signature: "sig_1" },
+          { type: "tool_use", id: "tu_1", name: "getWeather", input: { city: "Cairo" } },
+        ] as unknown as Anthropic.ContentBlock[],
+      }),
+    });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    const response = await model.complete([{ role: "user", content: "weather?" }]);
+    await model.complete([
+      { role: "user", content: "weather?" },
+      { role: "assistant", content: response.content, toolCalls: response.toolCalls },
+      { role: "tool", toolCallId: "tu_1", content: "Sunny" },
+    ]);
+
+    expect(calls[1].params.messages).toEqual([
+      { role: "user", content: "weather?" },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "I should look this up.", signature: "sig_1" },
+          { type: "tool_use", id: "tu_1", name: "getWeather", input: { city: "Cairo" } },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tu_1", content: "Sunny" }],
+      },
+    ]);
+  });
+
+  it("replays redacted thinking data before a tool-use follow-up", async () => {
+    const { client, calls } = makeFakeClient({
+      message: message({
+        stop_reason: "tool_use",
+        content: [
+          { type: "redacted_thinking", data: "encrypted-reasoning" },
+          { type: "tool_use", id: "tu_1", name: "getWeather", input: {} },
+        ] as unknown as Anthropic.ContentBlock[],
+      }),
+    });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    const result = await model.complete([{ role: "user", content: "weather?" }]);
+
+    expect(result.toolCalls?.[0].providerMetadata).toEqual({
+      anthropic: { thinkingBlocks: [{ type: "redacted_thinking", data: "encrypted-reasoning" }] },
+    });
+
+    await model.complete([
+      { role: "user", content: "weather?" },
+      { role: "assistant", content: result.content, toolCalls: result.toolCalls },
+      { role: "tool", toolCallId: "tu_1", content: "Sunny" },
+    ]);
+
+    expect(calls[1].params.messages?.[1]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "redacted_thinking", data: "encrypted-reasoning" },
+        { type: "tool_use", id: "tu_1", name: "getWeather", input: {} },
+      ],
+    });
+  });
+
   it("surfaces cache_read_input_tokens as cachedTokens when non-zero", async () => {
     const { client } = makeFakeClient({
       message: message({
@@ -513,6 +581,19 @@ describe("AnthropicModel.complete()", () => {
       type: "enabled",
       budget_tokens: 8000,
     });
+    expect(calls[0].params.max_tokens).toBe(12096);
+  });
+
+  it("rejects an explicit maxTokens that is not greater than the thinking budget", async () => {
+    const { client } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    await expect(
+      model.complete([{ role: "user", content: "hi" }], {
+        maxTokens: 8000,
+        reasoning: { maxTokens: 8000 },
+      }),
+    ).rejects.toThrow("maxTokens (8000) must be greater than thinking budget_tokens (8000)");
   });
 
   it("maps reasoning.effort levels to tiered thinking budgets", async () => {
@@ -704,6 +785,80 @@ describe("AnthropicModel.stream()", () => {
 
     expect(toolCalls).toEqual([{ id: "tu_1", name: "getWeather", input: { city: "Cairo" } }]);
     expect(finishReason).toBe("tool_calls");
+  });
+
+  it("round-trips streamed signed thinking blocks before the tool use", async () => {
+    const { client, calls } = makeFakeClient({
+      message: message(),
+      streamEvents: [
+        { type: "message_start", message: { usage: { input_tokens: 2 } } },
+        {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "thinking", thinking: "", signature: "" },
+        },
+        {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "thinking_delta", thinking: "Check the weather." },
+        },
+        {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "signature_delta", signature: "sig_stream" },
+        },
+        { type: "content_block_stop", index: 0 },
+        {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "tu_1", name: "getWeather", input: {} },
+        },
+        {
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "input_json_delta", partial_json: "{}" },
+        },
+        { type: "content_block_stop", index: 1 },
+        { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 3 } },
+        { type: "message_stop" },
+      ] as unknown as Anthropic.RawMessageStreamEvent[],
+    });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    const chunks = await collectStream(model.stream([{ role: "user", content: "weather?" }]));
+    const toolCall = chunks.find((chunk) => chunk.type === "tool-call");
+
+    await model.complete([
+      { role: "user", content: "weather?" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: toolCall?.id as string,
+            name: toolCall?.name as string,
+            input: toolCall?.input,
+            providerMetadata: toolCall?.providerMetadata as Record<string, unknown>,
+          },
+        ],
+      },
+      { role: "tool", toolCallId: "tu_1", content: "Sunny" },
+    ]);
+
+    expect(calls[1].params.messages).toEqual([
+      { role: "user", content: "weather?" },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Check the weather.", signature: "sig_stream" },
+          { type: "tool_use", id: "tu_1", name: "getWeather", input: {} },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tu_1", content: "Sunny" }],
+      },
+    ]);
   });
 
   it("rethrows a wrapped typed error when the stream request fails", async () => {
