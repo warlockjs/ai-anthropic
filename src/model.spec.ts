@@ -171,7 +171,7 @@ describe("AnthropicModel.complete()", () => {
       { role: "tool", toolCallId: "tu_1", content: "Sunny" },
     ]);
 
-    expect(calls[1].params.messages).toEqual([
+    expect(calls[1]?.params.messages).toEqual([
       { role: "user", content: "weather?" },
       {
         role: "assistant",
@@ -201,7 +201,7 @@ describe("AnthropicModel.complete()", () => {
 
     const result = await model.complete([{ role: "user", content: "weather?" }]);
 
-    expect(result.toolCalls?.[0].providerMetadata).toEqual({
+    expect(result.toolCalls?.[0]?.providerMetadata).toEqual({
       anthropic: { thinkingBlocks: [{ type: "redacted_thinking", data: "encrypted-reasoning" }] },
     });
 
@@ -211,7 +211,7 @@ describe("AnthropicModel.complete()", () => {
       { role: "tool", toolCallId: "tu_1", content: "Sunny" },
     ]);
 
-    expect(calls[1].params.messages?.[1]).toEqual({
+    expect(calls[1]?.params.messages?.[1]).toEqual({
       role: "assistant",
       content: [
         { type: "redacted_thinking", data: "encrypted-reasoning" },
@@ -581,7 +581,7 @@ describe("AnthropicModel.complete()", () => {
       type: "enabled",
       budget_tokens: 8000,
     });
-    expect(calls[0].params.max_tokens).toBe(12096);
+    expect(calls[0]?.params.max_tokens).toBe(12096);
   });
 
   it("rejects an explicit maxTokens that is not greater than the thinking budget", async () => {
@@ -845,7 +845,7 @@ describe("AnthropicModel.stream()", () => {
       { role: "tool", toolCallId: "tu_1", content: "Sunny" },
     ]);
 
-    expect(calls[1].params.messages).toEqual([
+    expect(calls[1]?.params.messages).toEqual([
       { role: "user", content: "weather?" },
       {
         role: "assistant",
