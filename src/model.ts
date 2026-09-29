@@ -15,6 +15,7 @@ import { log, type Logger } from "@warlock.js/logger";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { AnthropicModelConfig } from "./config.type";
 import { inferVisionCapability } from "./known-vision-models";
+import { acceptsTemperature, inferThinkingMode, type AnthropicThinkingMode } from "./thinking-mode";
 import { mapStopReason, toAnthropicMessages, toAnthropicTools, wrapAnthropicError } from "./utils";
 
 const LOG_MODULE = "ai.anthropic";
@@ -35,20 +36,64 @@ const DEFAULT_MAX_TOKENS = 4096;
  */
 const MIN_THINKING_BUDGET = 1024;
 
+type ThinkingEffort = Exclude<ReasoningEffort, "none">;
+
 /**
- * Map the neutral `ReasoningEffort` level to an Anthropic
- * `thinking.budget_tokens` value. Anthropic budgets reasoning by token
- * count (unlike OpenAI's opaque `reasoning_effort` enum), so the three
- * neutral levels translate to representative token budgets when the
- * caller doesn't pass an explicit `reasoning.maxTokens`.
+ * Effort used when the caller asks for reasoning with only
+ * `reasoning.maxTokens` and no `effort`. `"medium"` is what the adapter
+ * has always assumed (the budget lookup fell back to
+ * `EFFORT_THINKING_BUDGET.medium`), so adaptive models get the same tier.
  */
-const EFFORT_THINKING_BUDGET: Record<Exclude<ReasoningEffort, "none">, number> = {
+const DEFAULT_THINKING_EFFORT: ThinkingEffort = "medium";
+
+/**
+ * Map the neutral `ReasoningEffort` level to a thinking token count.
+ *
+ * - Budget-mode models: sent as `thinking.budget_tokens` when the caller
+ *   doesn't pass an explicit `reasoning.maxTokens`.
+ * - Both modes: reserved on top of `DEFAULT_MAX_TOKENS` when the caller
+ *   sets no `maxTokens`, because thinking counts toward `max_tokens`
+ *   (installed SDK `ThinkingConfigParam` docs, `messages.d.ts:1105`).
+ *   Adaptive models therefore get the same `max_tokens` the budget path
+ *   has always produced.
+ */
+const EFFORT_THINKING_BUDGET: Record<ThinkingEffort, number> = {
   low: 1024,
   medium: 4096,
   high: 12000,
 };
 
+/**
+ * Map the neutral `ReasoningEffort` level to Anthropic's
+ * `output_config.effort` for adaptive-mode models. The installed SDK
+ * accepts `low | medium | high | xhigh | max` (`OutputConfig.effort`,
+ * `messages.d.ts:800`); the neutral enum's three levels map 1:1 onto the
+ * same names. `xhigh` / `max` have no neutral equivalent yet.
+ */
+const EFFORT_TO_OUTPUT_EFFORT: Record<
+  ThinkingEffort,
+  NonNullable<Anthropic.OutputConfig["effort"]>
+> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+};
+
 type AnthropicThinkingBlock = Anthropic.ThinkingBlock | Anthropic.RedactedThinkingBlock;
+
+/**
+ * Resolved thinking settings for one request.
+ *
+ * - `thinking`: the wire `thinking` field (absent = send nothing).
+ * - `effort`: `output_config.effort`, set for adaptive-mode models only.
+ * - `reservedTokens`: thinking tokens to reserve on top of
+ *   `DEFAULT_MAX_TOKENS` when the caller configured no `maxTokens`.
+ */
+type ThinkingRequest = {
+  thinking?: Anthropic.ThinkingConfigParam;
+  effort?: Anthropic.OutputConfig["effort"];
+  reservedTokens?: number;
+};
 
 /**
  * Anthropic-backed implementation of `ModelContract`.
@@ -96,6 +141,7 @@ export class AnthropicModel implements ModelContract {
 
   private readonly client: Anthropic;
   private readonly config: AnthropicModelConfig;
+  private readonly thinkingMode: AnthropicThinkingMode;
   private readonly logger: Logger = log;
 
   public constructor(
@@ -108,11 +154,14 @@ export class AnthropicModel implements ModelContract {
     this.name = config.name;
     this.provider = provider;
     this.pricing = config.pricing;
+    // Adaptive vs budget thinking — also decides whether `temperature` is
+    // accepted. Explicit config wins over name inference, like `vision`.
+    this.thinkingMode = config.thinkingMode ?? inferThinkingMode(config.name);
     this.capabilities = {
       structuredOutput: config.structuredOutput ?? true,
       vision: config.vision ?? inferVisionCapability(config.name),
       // Every modern Claude model accepts Anthropic extended thinking
-      // (`thinking: { type: "enabled", budget_tokens }`). Advertise the
+      // (adaptive or `budget_tokens`, per `thinkingMode`). Advertise the
       // reasoning channel so the agent forwards `reasoning` options;
       // explicit config override wins for proxied/legacy targets.
       reasoning: config.reasoning ?? true,
@@ -335,7 +384,8 @@ export class AnthropicModel implements ModelContract {
    * temperature, tools, native structured output, extended thinking
    * (`reasoning`), and a system-prompt cache breakpoint (`cacheControl`).
    * Temperature is dropped when thinking is enabled, since Anthropic
-   * rejects the two together.
+   * rejects the two together, and always for adaptive-mode models, which
+   * reject any explicit temperature (see `acceptsTemperature`).
    */
   private buildParams(
     messages: Message[],
@@ -349,7 +399,17 @@ export class AnthropicModel implements ModelContract {
       thinking.thinking?.type === "enabled" ? thinking.thinking.budget_tokens : undefined;
     const maxTokens =
       configuredMaxTokens ??
-      (thinkingBudget !== undefined ? thinkingBudget + DEFAULT_MAX_TOKENS : DEFAULT_MAX_TOKENS);
+      (thinking.reservedTokens !== undefined
+        ? thinking.reservedTokens + DEFAULT_MAX_TOKENS
+        : DEFAULT_MAX_TOKENS);
+    // Extended thinking pins sampling to the default temperature —
+    // Anthropic 400s when `thinking` is enabled alongside any explicit
+    // `temperature`. Models released after Opus 4.6 (adaptive mode) reject
+    // an explicit temperature outright (installed SDK
+    // `MessageCreateParamsBase.temperature`, `messages.d.ts:2036-2040`).
+    // Drop it in both cases rather than letting the request fail.
+    const sendTemperature =
+      temperature !== undefined && !thinking.thinking && acceptsTemperature(this.thinkingMode);
 
     if (thinkingBudget !== undefined && configuredMaxTokens !== undefined && configuredMaxTokens <= thinkingBudget) {
       throw new Error(
@@ -362,14 +422,10 @@ export class AnthropicModel implements ModelContract {
       max_tokens: maxTokens,
       messages: anthropicMessages,
       ...this.buildSystem(system, options?.cacheControl),
-      // Extended thinking pins sampling to the default temperature —
-      // Anthropic 400s when `thinking` is enabled alongside any explicit
-      // `temperature`. Drop temperature in that case rather than letting
-      // the request fail.
-      ...(temperature !== undefined && !thinking.thinking ? { temperature } : {}),
+      ...(sendTemperature ? { temperature } : {}),
       ...this.buildTools(options?.tools),
-      ...this.buildStructuredOutput(options?.responseSchema),
-      ...thinking,
+      ...this.buildOutputConfig(options?.responseSchema, thinking.effort),
+      ...(thinking.thinking ? { thinking: thinking.thinking } : {}),
     };
   }
 
@@ -405,20 +461,28 @@ export class AnthropicModel implements ModelContract {
   }
 
   /**
-   * Translate the neutral `reasoning` option into Anthropic's
-   * `thinking` request field. Emitted only when the model declares the
-   * `reasoning` capability AND a reasoning option is supplied; otherwise
-   * returns an empty object so the caller can unconditionally spread it.
+   * Translate the neutral `reasoning` option into Anthropic's thinking
+   * settings, in the shape this model accepts (`thinkingMode`). Emitted
+   * only when the model declares the `reasoning` capability AND a
+   * reasoning option is supplied; otherwise returns an empty object.
    *
-   * Budget resolution: an explicit `reasoning.maxTokens` wins; otherwise
-   * the neutral `effort` level maps to a tiered token budget. Anthropic
-   * requires `budget_tokens` ≥ 1024, so the budget is floored at that
-   * minimum. The neutral `effort: "none"` ("run without reasoning") maps
-   * to no `thinking` block at all — extended thinking is opt-in here.
+   * - Adaptive mode (Opus 4.7+, Sonnet 5+, Fable 5+, unknown ids):
+   *   `thinking: { type: "adaptive" }` (installed SDK
+   *   `ThinkingConfigAdaptive`, `messages.d.ts:1065`) plus
+   *   `output_config.effort` from the neutral effort, defaulting to
+   *   `"medium"`. `budget_tokens` is never sent — these models 400 on it
+   *   (claude-api ref). `reasoning.maxTokens` only sizes the default
+   *   `max_tokens` headroom.
+   * - Budget mode (Haiku 4.5, Opus/Sonnet 4.6, older):
+   *   `thinking: { type: "enabled", budget_tokens }`. An explicit
+   *   `reasoning.maxTokens` wins; otherwise the effort maps to a tiered
+   *   budget. `budget_tokens` must be ≥ 1024 (`ThinkingConfigEnabled`,
+   *   `messages.d.ts:1084`), so the budget is floored at that minimum.
+   *
+   * The neutral `effort: "none"` ("run without reasoning") maps to no
+   * `thinking` field at all in both modes.
    */
-  private buildThinking(
-    reasoning: ModelCallOptions["reasoning"],
-  ): { thinking?: Anthropic.ThinkingConfigParam } {
+  private buildThinking(reasoning: ModelCallOptions["reasoning"]): ThinkingRequest {
     if (!this.capabilities.reasoning || !reasoning) {
       return {};
     }
@@ -435,13 +499,23 @@ export class AnthropicModel implements ModelContract {
       return {};
     }
 
-    const budget = reasoning.maxTokens ?? EFFORT_THINKING_BUDGET[reasoning.effort ?? "medium"];
+    const effort = reasoning.effort ?? DEFAULT_THINKING_EFFORT;
+    const budget = Math.max(
+      MIN_THINKING_BUDGET,
+      reasoning.maxTokens ?? EFFORT_THINKING_BUDGET[effort],
+    );
+
+    if (this.thinkingMode === "adaptive") {
+      return {
+        thinking: { type: "adaptive" },
+        effort: EFFORT_TO_OUTPUT_EFFORT[effort],
+        reservedTokens: budget,
+      };
+    }
 
     return {
-      thinking: {
-        type: "enabled",
-        budget_tokens: Math.max(MIN_THINKING_BUDGET, budget),
-      },
+      thinking: { type: "enabled", budget_tokens: budget },
+      reservedTokens: budget,
     };
   }
 
@@ -474,33 +548,55 @@ export class AnthropicModel implements ModelContract {
   }
 
   /**
-   * Translate the neutral `responseSchema` option into Anthropic's
-   * native `output_config.format` (JSON-schema structured outputs).
-   *
-   * Only emitted when the model declares the `structuredOutput`
-   * capability AND the schema is a proper root-object JSON Schema —
-   * Anthropic rejects non-object roots. When the capability is off
-   * (config override) or the schema is non-object, returns an empty
-   * object: the agent has already injected a soft schema hint into the
-   * system prompt as the fallback, and client-side `validate()` still
-   * enforces shape.
+   * Spread-friendly `output_config` fragment carrying both the native
+   * structured-output `format` and the adaptive-thinking `effort`, merged
+   * into one object (both live under `OutputConfig`, installed SDK
+   * `messages.d.ts:796-806`). Returns an empty object when neither applies,
+   * so budget-mode requests carry `output_config` only when a schema asks
+   * for it.
    */
-  private buildStructuredOutput(responseSchema: Record<string, unknown> | undefined): {
-    output_config?: Anthropic.OutputConfig;
-  } {
-    if (!responseSchema || !this.capabilities.structuredOutput) {
-      return {};
-    }
+  private buildOutputConfig(
+    responseSchema: Record<string, unknown> | undefined,
+    effort: Anthropic.OutputConfig["effort"],
+  ): { output_config?: Anthropic.OutputConfig } {
+    const format = this.buildStructuredOutputFormat(responseSchema);
 
-    if (responseSchema.type !== "object" || typeof responseSchema.properties !== "object") {
+    if (!format && !effort) {
       return {};
     }
 
     return {
       output_config: {
-        format: { type: "json_schema", schema: responseSchema },
+        ...(format ? { format } : {}),
+        ...(effort ? { effort } : {}),
       },
     };
+  }
+
+  /**
+   * Translate the neutral `responseSchema` option into Anthropic's
+   * native `output_config.format` (JSON-schema structured outputs).
+   *
+   * Only returned when the model declares the `structuredOutput`
+   * capability AND the schema is a proper root-object JSON Schema —
+   * Anthropic rejects non-object roots. When the capability is off
+   * (config override) or the schema is non-object, returns `undefined`:
+   * the agent has already injected a soft schema hint into the system
+   * prompt as the fallback, and client-side `validate()` still enforces
+   * shape.
+   */
+  private buildStructuredOutputFormat(
+    responseSchema: Record<string, unknown> | undefined,
+  ): Anthropic.JSONOutputFormat | undefined {
+    if (!responseSchema || !this.capabilities.structuredOutput) {
+      return undefined;
+    }
+
+    if (responseSchema.type !== "object" || typeof responseSchema.properties !== "object") {
+      return undefined;
+    }
+
+    return { type: "json_schema", schema: responseSchema };
   }
 
   /**

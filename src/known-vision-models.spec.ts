@@ -9,6 +9,22 @@ describe("inferVisionCapability", () => {
     expect(inferVisionCapability("claude-opus-4-20250514")).toBe(true);
   });
 
+  it("returns true for the 4.6 / 4.7 / 4.8 releases", () => {
+    expect(inferVisionCapability("claude-opus-4-6")).toBe(true);
+    expect(inferVisionCapability("claude-opus-4-8")).toBe(true);
+    expect(inferVisionCapability("claude-sonnet-4-6")).toBe(true);
+  });
+
+  it("returns true for the Claude 5-series families (Opus, Sonnet, Fable, Mythos)", () => {
+    expect(inferVisionCapability("claude-opus-5")).toBe(true);
+    expect(inferVisionCapability("claude-opus-5-5")).toBe(true);
+    expect(inferVisionCapability("claude-sonnet-5")).toBe(true);
+    expect(inferVisionCapability("claude-sonnet-5-5")).toBe(true);
+    expect(inferVisionCapability("claude-fable-5")).toBe(true);
+    expect(inferVisionCapability("claude-fable-5-1")).toBe(true);
+    expect(inferVisionCapability("claude-mythos-5-1")).toBe(true);
+  });
+
   it("returns true for claude-3 / 3.5 / 3.7 dotted naming", () => {
     expect(inferVisionCapability("claude-3-haiku-20240307")).toBe(true);
     expect(inferVisionCapability("claude-3-5-sonnet-latest")).toBe(true);

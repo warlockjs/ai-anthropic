@@ -1,5 +1,6 @@
 import type { ModelConfig, ModelPricing } from "@warlock.js/ai";
 import type { ClientOptions } from "@anthropic-ai/sdk";
+import type { AnthropicThinkingMode } from "./thinking-mode";
 
 /**
  * Configuration for the Anthropic SDK adapter.
@@ -89,11 +90,28 @@ export type AnthropicModelConfig = ModelConfig & {
    * Override the inferred `reasoning` capability. When omitted, the
    * adapter advertises reasoning as supported (every modern Claude model
    * accepts Anthropic extended thinking via `thinking`), so a per-call
-   * `ModelCallOptions.reasoning` is forwarded as
-   * `thinking: { type: "enabled", budget_tokens }`. Set to `false` for
-   * proxied deployments or older targets that reject the `thinking`
-   * param — the adapter then ignores reasoning options rather than
-   * sending an unsupported field.
+   * `ModelCallOptions.reasoning` is forwarded in the model's thinking
+   * shape (see `thinkingMode`). Set to `false` for proxied deployments or
+   * older targets that reject the `thinking` param — the adapter then
+   * ignores reasoning options rather than sending an unsupported field.
    */
   reasoning?: boolean;
+  /**
+   * Override the inferred thinking mode. When omitted, the adapter infers
+   * it from the model name (see `thinking-mode.ts`): `"budget"` for
+   * Claude Haiku 4.5, Opus/Sonnet 4.6 and older models, `"adaptive"` for
+   * everything else (Opus 4.7+, Sonnet 5+, Fable 5+, and unknown ids).
+   *
+   * - `"adaptive"` sends `thinking: { type: "adaptive" }` plus
+   *   `output_config.effort`, and never sends `temperature`.
+   * - `"budget"` sends `thinking: { type: "enabled", budget_tokens }` and
+   *   keeps forwarding `temperature`.
+   *
+   * Useful for gateways/proxies whose model ids don't follow Anthropic's
+   * naming, or to opt Opus/Sonnet 4.6 into adaptive thinking.
+   *
+   * @example
+   * anthropic.model({ name: "my-gateway/haiku", thinkingMode: "budget" });
+   */
+  thinkingMode?: AnthropicThinkingMode;
 };

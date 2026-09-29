@@ -1193,3 +1193,268 @@ describe("AnthropicModel.stream()", () => {
     ]);
   });
 });
+
+/**
+ * Per-model thinking + sampling rules (5.26 fixes A and B). Adaptive-mode
+ * models (Opus 4.7+, Sonnet 5+, Fable 5+, unknown/future ids) must get
+ * `thinking: { type: "adaptive" }` + `output_config.effort` and never
+ * `budget_tokens` or `temperature`; budget-mode models (Haiku 4.5, the
+ * 4.6 pair, older) keep the legacy `budget_tokens` shape and temperature.
+ */
+describe("AnthropicModel per-model thinking and temperature rules", () => {
+  type WireParams = {
+    thinking?: Record<string, unknown>;
+    output_config?: Record<string, unknown>;
+    temperature?: number;
+    max_tokens?: number;
+    stream?: boolean;
+  };
+
+  const ADAPTIVE_MODELS = [
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-opus-5-5",
+    "claude-sonnet-5",
+    "claude-sonnet-5-5",
+    "claude-fable-5",
+    "claude-fable-5-1",
+    "claude-some-future-model",
+  ];
+
+  it("sends adaptive thinking plus output_config.effort for an adaptive model", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-opus-5-5" });
+
+    await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort: "high" } });
+
+    const params = calls[0].params as WireParams;
+
+    expect(params.thinking).toEqual({ type: "adaptive" });
+    expect(params.output_config).toEqual({ effort: "high" });
+    // Same answer headroom as the budget path today: high budget (12000) + 4096.
+    expect(params.max_tokens).toBe(16096);
+  });
+
+  it("defaults the effort to medium when an adaptive model gets only reasoning.maxTokens", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-5-5" });
+
+    await model.complete([{ role: "user", content: "hi" }], { reasoning: { maxTokens: 8000 } });
+
+    const params = calls[0].params as WireParams;
+
+    expect(params.thinking).toEqual({ type: "adaptive" });
+    expect(params.output_config).toEqual({ effort: "medium" });
+    expect(params.max_tokens).toBe(12096);
+  });
+
+  it("merges the effort into output_config alongside a structured-output format", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-opus-4-8" });
+    const schema = { type: "object", properties: { summary: { type: "string" } } };
+
+    await model.complete([{ role: "user", content: "hi" }], {
+      reasoning: { effort: "low" },
+      responseSchema: schema,
+    });
+
+    expect((calls[0].params as WireParams).output_config).toEqual({
+      format: { type: "json_schema", schema },
+      effort: "low",
+    });
+  });
+
+  it("never sends budget_tokens to an adaptive model", async () => {
+    for (const name of ADAPTIVE_MODELS) {
+      const { client, calls } = makeFakeClient({ message: message() });
+      const model = new AnthropicModel(client, { name });
+
+      await model.complete([{ role: "user", content: "hi" }], { reasoning: { maxTokens: 9000 } });
+      await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort: "high" } });
+      await model.complete([{ role: "user", content: "hi" }], {
+        reasoning: { effort: "low", maxTokens: 2000 },
+      });
+
+      for (const call of calls) {
+        expect(JSON.stringify(call.params), name).not.toContain("budget_tokens");
+        expect((call.params as WireParams).thinking, name).toEqual({ type: "adaptive" });
+      }
+    }
+  });
+
+  it("does not reject a maxTokens below reasoning.maxTokens on an adaptive model", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-opus-5-5" });
+
+    await model.complete([{ role: "user", content: "hi" }], {
+      maxTokens: 2000,
+      reasoning: { maxTokens: 8000 },
+    });
+
+    expect(calls[0].params.max_tokens).toBe(2000);
+  });
+
+  it("keeps budget_tokens and no output_config for a budget-mode model", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-haiku-4-5" });
+
+    await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort: "high" } });
+
+    const params = calls[0].params as WireParams;
+
+    expect(params.thinking).toEqual({ type: "enabled", budget_tokens: 12000 });
+    expect("output_config" in calls[0].params).toBe(false);
+  });
+
+  it("omits thinking and output_config on an adaptive model for effort 'none'", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-opus-4-7" });
+
+    await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort: "none" } });
+
+    expect("thinking" in calls[0].params).toBe(false);
+    expect("output_config" in calls[0].params).toBe(false);
+  });
+
+  it("omits temperature for a post-4.6 model even without thinking", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-opus-4-7", temperature: 0.4 });
+
+    await model.complete([{ role: "user", content: "hi" }]);
+    await model.complete([{ role: "user", content: "hi" }], { temperature: 0.9 });
+
+    expect("temperature" in calls[0].params).toBe(false);
+    expect("temperature" in calls[1].params).toBe(false);
+  });
+
+  it("keeps temperature for Haiku 4.5 and the 4.6 pair", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+
+    for (const name of ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-6"]) {
+      await new AnthropicModel(client, { name, temperature: 0.3 }).complete([
+        { role: "user", content: "hi" },
+      ]);
+    }
+
+    expect(calls.map((call) => call.params.temperature)).toEqual([0.3, 0.3, 0.3]);
+  });
+
+  it("honors an explicit thinkingMode override in either direction", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const proxiedLegacy = new AnthropicModel(client, {
+      name: "my-gateway-haiku",
+      thinkingMode: "budget",
+      temperature: 0.2,
+    });
+    const forcedAdaptive = new AnthropicModel(client, {
+      name: "claude-sonnet-4-6",
+      thinkingMode: "adaptive",
+    });
+
+    await proxiedLegacy.complete([{ role: "user", content: "hi" }], {
+      reasoning: { effort: "low" },
+    });
+    await proxiedLegacy.complete([{ role: "user", content: "hi" }]);
+    await forcedAdaptive.complete([{ role: "user", content: "hi" }], {
+      reasoning: { effort: "high" },
+    });
+
+    expect((calls[0].params as WireParams).thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 1024,
+    });
+    expect(calls[1].params.temperature).toBe(0.2);
+    expect((calls[2].params as WireParams).thinking).toEqual({ type: "adaptive" });
+    expect((calls[2].params as WireParams).output_config).toEqual({ effort: "high" });
+  });
+
+  it("replays signed thinking blocks on an adaptive model's tool-use follow-up", async () => {
+    const { client, calls } = makeFakeClient({
+      message: message({
+        model: "claude-opus-5-5",
+        stop_reason: "tool_use",
+        content: [
+          { type: "thinking", thinking: "", signature: "sig_adaptive" },
+          { type: "tool_use", id: "tu_1", name: "getWeather", input: { city: "Cairo" } },
+        ] as unknown as Anthropic.ContentBlock[],
+      }),
+    });
+    const model = new AnthropicModel(client, { name: "claude-opus-5-5" });
+
+    const response = await model.complete([{ role: "user", content: "weather?" }], {
+      reasoning: { effort: "medium" },
+    });
+    await model.complete(
+      [
+        { role: "user", content: "weather?" },
+        { role: "assistant", content: response.content, toolCalls: response.toolCalls },
+        { role: "tool", toolCallId: "tu_1", content: "Sunny" },
+      ],
+      { reasoning: { effort: "medium" } },
+    );
+
+    expect((calls[1].params as WireParams).thinking).toEqual({ type: "adaptive" });
+    expect(calls[1]?.params.messages?.[1]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "", signature: "sig_adaptive" },
+        { type: "tool_use", id: "tu_1", name: "getWeather", input: { city: "Cairo" } },
+      ],
+    });
+  });
+
+  it("applies the adaptive shape and drops temperature on a streaming request", async () => {
+    const { client, calls } = makeFakeClient({
+      streamEvents: [
+        { type: "message_start", message: { usage: { input_tokens: 1 } } },
+        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+      ] as unknown as Anthropic.RawMessageStreamEvent[],
+    });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-5-5", temperature: 0.5 });
+
+    await collectStream(
+      model.stream([{ role: "user", content: "hi" }], { reasoning: { effort: "low" } }),
+    );
+    await collectStream(model.stream([{ role: "user", content: "hi" }]));
+
+    const first = calls[0].params as WireParams;
+
+    expect(first.stream).toBe(true);
+    expect(first.thinking).toEqual({ type: "adaptive" });
+    expect(first.output_config).toEqual({ effort: "low" });
+    expect(JSON.stringify(first)).not.toContain("budget_tokens");
+    expect("temperature" in calls[0].params).toBe(false);
+    expect("temperature" in calls[1].params).toBe(false);
+  });
+
+  it("keeps budget_tokens and temperature on a budget-mode streaming request", async () => {
+    const { client, calls } = makeFakeClient({
+      streamEvents: [
+        { type: "message_start", message: { usage: { input_tokens: 1 } } },
+        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+      ] as unknown as Anthropic.RawMessageStreamEvent[],
+    });
+    const model = new AnthropicModel(client, { name: "claude-haiku-4-5", temperature: 0.5 });
+
+    await collectStream(
+      model.stream([{ role: "user", content: "hi" }], { reasoning: { effort: "medium" } }),
+    );
+    await collectStream(model.stream([{ role: "user", content: "hi" }]));
+
+    expect((calls[0].params as WireParams).thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 4096,
+    });
+    expect("output_config" in calls[0].params).toBe(false);
+    expect(calls[1].params.temperature).toBe(0.5);
+  });
+
+  it("infers vision for the Claude 5-series models", () => {
+    const { client } = makeFakeClient({ message: message() });
+
+    for (const name of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"]) {
+      expect(new AnthropicModel(client, { name }).capabilities.vision, name).toBe(true);
+    }
+  });
+});
