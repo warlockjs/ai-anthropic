@@ -394,7 +394,7 @@ export class AnthropicModel implements ModelContract {
    * prompt out of `messages`, resolves `max_tokens` (required by
    * Anthropic) with the documented default, and conditionally attaches
    * temperature, tools, native structured output, extended thinking
-   * (`reasoning`), and a system-prompt cache breakpoint (`cacheControl`).
+   * (`reasoning`), and automatic or explicit prompt-cache control.
    * Temperature is dropped when thinking is enabled, since Anthropic
    * rejects the two together, and always for adaptive-mode models, which
    * reject any explicit temperature (see `acceptsTemperature`).
@@ -437,6 +437,7 @@ export class AnthropicModel implements ModelContract {
       model: this.name,
       max_tokens: maxTokens,
       messages: anthropicMessages,
+      ...this.buildAutomaticCacheControl(options?.cacheControl),
       ...this.buildSystem(system, options?.cacheControl),
       ...(sendTemperature ? { temperature } : {}),
       ...this.buildTools(options?.tools),
@@ -469,11 +470,34 @@ export class AnthropicModel implements ModelContract {
 
     if (this.capabilities.promptCaching && breakpoints > 0) {
       return {
-        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        system: [{ type: "text", text: system, cache_control: this.cacheControl() }],
       };
     }
 
     return { system };
+  }
+
+  /**
+   * Let Anthropic select the last cacheable block when caching is enabled
+   * without a caller-selected breakpoint. An explicit breakpoint remains
+   * authoritative, so the request-level form is deliberately omitted then.
+   */
+  private buildAutomaticCacheControl(cacheControl: ModelCallOptions["cacheControl"]): {
+    cache_control?: Anthropic.CacheControlEphemeral;
+  } {
+    const breakpoints = cacheControl?.breakpoints ?? 0;
+
+    return this.config.promptCaching && breakpoints <= 0
+      ? { cache_control: this.cacheControl() }
+      : {};
+  }
+
+  /** Build a typed cache-control marker, omitting TTL for Anthropic's 5-minute default. */
+  private cacheControl(): Anthropic.CacheControlEphemeral {
+    return {
+      type: "ephemeral",
+      ...(this.config.promptCacheTtl ? { ttl: this.config.promptCacheTtl } : {}),
+    };
   }
 
   /**
@@ -557,7 +581,7 @@ export class AnthropicModel implements ModelContract {
 
     if (this.config.promptCaching && mapped.length > 0) {
       const last = mapped.length - 1;
-      mapped[last] = { ...mapped[last], cache_control: { type: "ephemeral" } };
+      mapped[last] = { ...mapped[last], cache_control: this.cacheControl() };
     }
 
     return { tools: mapped };

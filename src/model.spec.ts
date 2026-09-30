@@ -721,6 +721,48 @@ describe("AnthropicModel.complete()", () => {
     ]);
   });
 
+  it("automatically caches the longest reusable request prefix when prompt caching is enabled", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6", promptCaching: true });
+
+    await model.complete([{ role: "user", content: "hi" }]);
+
+    expect(calls[0].params.cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("uses the configured cache TTL for automatic and explicit cache breakpoints", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, {
+      name: "claude-sonnet-4-6",
+      promptCaching: true,
+      promptCacheTtl: "1h",
+    });
+
+    await model.complete([{ role: "user", content: "hi" }]);
+    await model.complete(
+      [
+        { role: "system", content: "Be concise." },
+        { role: "user", content: "hi" },
+      ],
+      { cacheControl: { breakpoints: 1 } },
+    );
+
+    expect(calls[0].params.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(calls[1].params.cache_control).toBeUndefined();
+    expect(calls[1].params.system).toEqual([
+      { type: "text", text: "Be concise.", cache_control: { type: "ephemeral", ttl: "1h" } },
+    ]);
+  });
+
+  it("does not emit automatic cache control when prompt caching is disabled", async () => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    await model.complete([{ role: "user", content: "hi" }]);
+
+    expect(calls[0].params.cache_control).toBeUndefined();
+  });
+
   it("leaves the system prompt a plain string when no cache breakpoint is requested", async () => {
     const { client, calls } = makeFakeClient({ message: message() });
     const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });

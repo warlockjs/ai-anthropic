@@ -68,11 +68,11 @@ export type AnthropicModelConfig = ModelConfig & {
    */
   structuredOutput?: boolean;
   /**
-   * Opt into Anthropic prompt caching for the (static) tool definitions.
-   * When `true`, the adapter marks the tools block with
-   * `cache_control: { type: "ephemeral" }` so multi-trip / multi-turn
-   * agents reuse the tool schemas at the ~0.1x cache-read rate instead
-   * of re-sending them at full price every trip.
+   * Opt into Anthropic prompt caching. When a request has no explicit
+   * `ModelCallOptions.cacheControl.breakpoints`, the adapter sends
+   * request-level `cache_control: { type: "ephemeral" }`, letting
+   * Anthropic cache the longest reusable prefix automatically. Tool
+   * definitions are still marked explicitly when present.
    *
    * Off by default: a cache *write* costs ~1.25x, so it only pays off
    * when the cached prefix is read at least twice (multi-trip agents).
@@ -86,6 +86,13 @@ export type AnthropicModelConfig = ModelConfig & {
    * breakpoint on the system prompt — that hint is opt-in per request.
    */
   promptCaching?: boolean;
+  /**
+   * Lifetime for prompt-cache entries emitted by `promptCaching` and
+   * explicit `cacheControl.breakpoints`. Omit for Anthropic's default
+   * five-minute TTL; use `"1h"` only when its higher write cost is worth
+   * retaining a stable prefix for longer.
+   */
+  promptCacheTtl?: "5m" | "1h";
   /**
    * Override the inferred `reasoning` capability. When omitted, the
    * adapter advertises reasoning as supported (every modern Claude model

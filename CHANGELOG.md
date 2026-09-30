@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `thinkingMode: "adaptive" | "budget"` on `anthropic.model({ ... })` overrides the thinking shape inferred from the model name. Use it for gateway model ids that don't follow Anthropic's naming, or to move Opus/Sonnet 4.6 onto adaptive thinking. It also decides whether `temperature` is sent. The `AnthropicThinkingMode` type is exported.
+- `promptCaching: true` now enables Anthropic's request-level automatic cache placement when a call has no explicit cache breakpoint, so the longest reusable prefix is cached. `promptCacheTtl?: "5m" | "1h"` controls the TTL for automatic and explicit cache markers; omission keeps Anthropic's five-minute default.
 
 ## 5.25.0 - 2026-09-28
 

@@ -27,21 +27,21 @@ const proxied = new AnthropicSDK({
 ## Producing a model
 
 ```ts
-anthropic.model({ name: "claude-sonnet-4-6" })                  // common case
-anthropic.model({ name: "claude-haiku-4-5", temperature: 0.2 }) // sampling controls
-anthropic.model({ name: "claude-opus-4-7", maxTokens: 8192 })   // raise the cap
+anthropic.model({ name: "claude-sonnet-4-6" }); // common case
+anthropic.model({ name: "claude-haiku-4-5", temperature: 0.2 }); // sampling controls
+anthropic.model({ name: "claude-opus-4-7", maxTokens: 8192 }); // raise the cap
 ```
 
 ## Capabilities — what's auto-set
 
-| Flag | Default |
-| --- | --- |
-| `structuredOutput` | `true` (via Anthropic's native `output_config.format`) |
-| `vision` | Inferred from model name. `true` for Claude 3 / 3.5 / 3.7 / 4 and Claude 5-series (`claude-opus-5*`, `claude-sonnet-5*`, `claude-fable-5*`, `claude-mythos-5*`); `false` for pre-3 and unknown ids. |
-| `reasoning` | `true` — forwarded in the shape the model accepts (see [Extended thinking](#extended-thinking-reasoning)). Override with `reasoning: false` for legacy/proxied targets that reject the `thinking` param. |
-| `promptCaching` | `true` — the adapter places `cache_control` breakpoints and reports both cache reads (`Usage.cachedTokens`) and writes (`Usage.cacheWriteTokens`). |
-| `pdf` | `true` — the Messages API accepts PDF/document content blocks on vision-capable models. |
-| `audio` | absent (`false`) — Anthropic has no audio-input block, so the agent rejects audio attachments upfront. |
+| Flag               | Default                                                                                                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `structuredOutput` | `true` (via Anthropic's native `output_config.format`)                                                                                                                                                   |
+| `vision`           | Inferred from model name. `true` for Claude 3 / 3.5 / 3.7 / 4 and Claude 5-series (`claude-opus-5*`, `claude-sonnet-5*`, `claude-fable-5*`, `claude-mythos-5*`); `false` for pre-3 and unknown ids.      |
+| `reasoning`        | `true` — forwarded in the shape the model accepts (see [Extended thinking](#extended-thinking-reasoning)). Override with `reasoning: false` for legacy/proxied targets that reject the `thinking` param. |
+| `promptCaching`    | `true` — the adapter places `cache_control` breakpoints and reports both cache reads (`Usage.cachedTokens`) and writes (`Usage.cacheWriteTokens`).                                                       |
+| `pdf`              | `true` — the Messages API accepts PDF/document content blocks on vision-capable models.                                                                                                                  |
+| `audio`            | absent (`false`) — Anthropic has no audio-input block, so the agent rejects audio attachments upfront.                                                                                                   |
 
 Explicit config always wins (`structuredOutput`, `vision`, `reasoning`, `thinkingMode`).
 
@@ -54,7 +54,7 @@ Pricing is opt-in. Supply USD-per-million-token rates and every report this SDK'
 const anthropic = new AnthropicSDK({
   apiKey,
   pricing: {
-    "claude-haiku-4-5":  { input: 1, output: 5,  cachedInput: 0.1 },
+    "claude-haiku-4-5": { input: 1, output: 5, cachedInput: 0.1 },
     "claude-sonnet-4-6": { input: 3, output: 15, cachedInput: 0.3 },
   },
 });
@@ -69,11 +69,11 @@ Resolution at `model()` time: per-model `pricing` > SDK registry entry for that 
 
 Every `ModelResponse.usage` (and the streaming terminal `done`) is normalized to the neutral `Usage` shape. Anthropic reports `input_tokens` / `output_tokens` separately with no pre-summed total, so `total` is computed (`input + output`). The two cache channels are surfaced only when non-zero:
 
-| Neutral field | Anthropic source | Meaning / billing |
-| --- | --- | --- |
-| `usage.cachedTokens` | `cache_read_input_tokens` | Subset of input served from the prompt cache. Bills at `cachedInput` (falls back to `input` when unset). |
-| `usage.cacheWriteTokens` | `cache_creation_input_tokens` | Input tokens **written** to the cache on this call (the ~1.25x write surcharge). Bills at `cachedOutput` when set. |
-| `usage.reasoningTokens` | — *(not reported separately)* | Anthropic bills extended-thinking tokens **inside** `output_tokens`, so this stays unset — populating it would double-count against `output`. |
+| Neutral field            | Anthropic source              | Meaning / billing                                                                                                                             |
+| ------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `usage.cachedTokens`     | `cache_read_input_tokens`     | Subset of input served from the prompt cache. Bills at `cachedInput` (falls back to `input` when unset).                                      |
+| `usage.cacheWriteTokens` | `cache_creation_input_tokens` | Input tokens **written** to the cache on this call (the ~1.25x write surcharge). Bills at `cachedOutput` when set.                            |
+| `usage.reasoningTokens`  | — _(not reported separately)_ | Anthropic bills extended-thinking tokens **inside** `output_tokens`, so this stays unset — populating it would double-count against `output`. |
 
 In streaming, `cachedTokens` / `cacheWriteTokens` are seeded from `message_start` and then **overwritten by the cumulative counts on `message_delta`** when those are present and non-zero, so the terminal `done` carries the final tally.
 
@@ -102,10 +102,10 @@ When the agent passes `responseSchema` and the model is `structuredOutput`-capab
 
 When the model is `reasoning`-capable (default `true`) and the agent passes `options.reasoning`, the adapter forwards Anthropic thinking in one of two shapes, chosen per model (`thinkingMode`):
 
-| Mode | Models (inferred from the name) | Wire shape |
-| --- | --- | --- |
+| Mode         | Models (inferred from the name)                                                                                                 | Wire shape                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
 | `"adaptive"` | Current Claude models — Opus 4.7 / 4.8 / 5 / 5.5, Sonnet 5 / 5.5, Fable 5 / 5.1 — **and any id the adapter does not recognise** | `thinking: { type: "adaptive" }` + `output_config.effort` |
-| `"budget"` | Haiku 4.5, Opus 4.6, Sonnet 4.6, and every older model (Claude 3.x, 4.0 / 4.1 / 4.5, 2, instant) | `thinking: { type: "enabled", budget_tokens }` |
+| `"budget"`   | Haiku 4.5, Opus 4.6, Sonnet 4.6, and every older model (Claude 3.x, 4.0 / 4.1 / 4.5, 2, instant)                                | `thinking: { type: "enabled", budget_tokens }`            |
 
 Adaptive models reject `budget_tokens` with a 400, so the shape matters.
 
@@ -115,7 +115,7 @@ Adaptive models reject `budget_tokens` with a 400, so the shape matters.
 
 ### `thinkingMode` override
 
-`anthropic.model({ name, thinkingMode: "adaptive" | "budget" })` beats the name-based detection. Use it when the id does not look like an Anthropic id: region-prefixed / Bedrock-style ids (`us.anthropic.claude-…`) and custom or gateway ids are *unrecognised*, so they default to adaptive. If they front an older model (Haiku 4.5, 4.6 or earlier) set `thinkingMode: "budget"`. It can also move Opus/Sonnet 4.6 onto adaptive. The `AnthropicThinkingMode` type is exported.
+`anthropic.model({ name, thinkingMode: "adaptive" | "budget" })` beats the name-based detection. Use it when the id does not look like an Anthropic id: region-prefixed / Bedrock-style ids (`us.anthropic.claude-…`) and custom or gateway ids are _unrecognised_, so they default to adaptive. If they front an older model (Haiku 4.5, 4.6 or earlier) set `thinkingMode: "budget"`. It can also move Opus/Sonnet 4.6 onto adaptive. The `AnthropicThinkingMode` type is exported.
 
 ```ts
 import { AnthropicSDK, type AnthropicThinkingMode } from "@warlock.js/ai-anthropic";
@@ -124,8 +124,8 @@ const anthropic = new AnthropicSDK({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 const mode: AnthropicThinkingMode = "budget";
 
-anthropic.model({ name: "claude-opus-5-5" });                             // adaptive (detected)
-anthropic.model({ name: "claude-haiku-4-5" });                            // budget (detected)
+anthropic.model({ name: "claude-opus-5-5" }); // adaptive (detected)
+anthropic.model({ name: "claude-haiku-4-5" }); // budget (detected)
 anthropic.model({ name: "us.anthropic.claude-haiku-4-5", thinkingMode: mode }); // region-prefixed id of an older model
 anthropic.model({ name: "claude-sonnet-4-6", thinkingMode: "adaptive" }); // opt 4.6 into adaptive
 ```
@@ -146,13 +146,24 @@ When a thinking-enabled response also makes tool calls, its signed `thinking` an
 
 ## Prompt caching (`cache_control`)
 
+Caching is opt-in: `model({ promptCaching: true })` sends request-level
+`cache_control: { type: "ephemeral" }` when a call has no explicit
+`options.cacheControl.breakpoints`. Anthropic then marks the last cacheable
+block itself, caching the longest reusable request prefix (including growing
+message history). A caller-supplied breakpoint remains authoritative, so its
+request has no top-level automatic marker.
+
+Set `promptCacheTtl: "1h"` on the model to apply a one-hour TTL to automatic
+caching and emitted explicit markers. Omit it (or use `"5m"`) for Anthropic's
+default five-minute TTL; the one-hour cache has a higher write cost.
+
 Two independent breakpoint sites, both reported back via `usage.cachedTokens` / `usage.cacheWriteTokens`:
 
-- **Tools** — set `model({ promptCaching: true })` to mark the *last* tool definition with `cache_control: ephemeral`. One breakpoint caches the whole tool prefix; off by default since a write costs ~1.25x and only pays off across multiple trips.
+- **Tools** — set `model({ promptCaching: true })` to mark the _last_ tool definition with `cache_control: ephemeral`. One breakpoint caches the whole tool prefix; off by default since a write costs ~1.25x and only pays off across multiple trips.
 - **System prompt** — a per-call `options.cacheControl.breakpoints >= 1` emits the system prompt as a `TextBlockParam` carrying `cache_control: ephemeral` (the longest stable prefix on a turn). Without the hint the system prompt stays a plain string (uncached), so a one-shot call never pays the write surcharge. No system prompt → no block.
 
 ```ts
-await agent.execute("…", { cacheControl: { breakpoints: 1 } });  // cache the system prefix
+await agent.execute("…", { cacheControl: { breakpoints: 1 } }); // cache the system prefix
 ```
 
 ## Multipart messages (vision)
@@ -189,7 +200,7 @@ Raw SDK errors are wrapped into the typed `@warlock.js/ai` `AIError` hierarchy. 
 ## Token counting
 
 ```ts
-await anthropic.count("some text")  // approximate heuristic, offline
+await anthropic.count("some text"); // approximate heuristic, offline
 ```
 
 ## No embeddings
