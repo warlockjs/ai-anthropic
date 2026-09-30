@@ -1,6 +1,6 @@
 ---
 name: setup-anthropic
-description: 'Wire @warlock.js/ai-anthropic — new AnthropicSDK({apiKey, baseURL?, provider?}) for Claude, .model({name, vision?, structuredOutput?, reasoning?, promptCaching?, maxTokens?}). System-prompt hoisting, max_tokens required (default 4096), extended thinking via options.reasoning → thinking budget_tokens, prompt caching via promptCaching + options.cacheControl, cost-truth usage (cachedTokens/cacheWriteTokens), no first-party embeddings. Triggers: `AnthropicSDK`, `anthropic.model`, `anthropic.count`, `maxTokens`, `reasoning`, `thinking`, `budget_tokens`, `cacheControl`, `promptCaching`, `cachedTokens`, `cacheWriteTokens`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-7`; "wire claude into warlock agent", "configure anthropic provider", "use claude sonnet", "anthropic gateway baseURL", "claude extended thinking", "anthropic prompt caching cost"; typical import `import { AnthropicSDK } from "@warlock.js/ai-anthropic"`. Skip: embeddings — `@warlock.js/ai-openai/setup-openai/SKILL.md`; sibling adapters `@warlock.js/ai-openai`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `@anthropic-ai/sdk`; Vercel `@ai-sdk/anthropic`.'
+description: 'Wire @warlock.js/ai-anthropic — new AnthropicSDK({apiKey, baseURL?, provider?}) for Claude, .model({name, vision?, structuredOutput?, reasoning?, thinkingMode?, promptCaching?, maxTokens?}). System-prompt hoisting, max_tokens required (default 4096), extended thinking via options.reasoning → adaptive thinking + output_config.effort (current/unknown models) or budget_tokens (Haiku 4.5, 4.6 and older; override with thinkingMode), prompt caching via promptCaching + options.cacheControl, cost-truth usage (cachedTokens/cacheWriteTokens), no first-party embeddings. Triggers: `AnthropicSDK`, `anthropic.model`, `anthropic.count`, `maxTokens`, `reasoning`, `thinking`, `budget_tokens`, `thinkingMode`, `adaptive`, `cacheControl`, `promptCaching`, `cachedTokens`, `cacheWriteTokens`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-7`; "wire claude into warlock agent", "configure anthropic provider", "use claude sonnet", "anthropic gateway baseURL", "claude extended thinking", "anthropic prompt caching cost"; typical import `import { AnthropicSDK } from "@warlock.js/ai-anthropic"`. Skip: embeddings — `@warlock.js/ai-openai/setup-openai/SKILL.md`; sibling adapters `@warlock.js/ai-openai`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `@anthropic-ai/sdk`; Vercel `@ai-sdk/anthropic`.'
 ---
 
 # `@warlock.js/ai-anthropic`
@@ -37,13 +37,13 @@ anthropic.model({ name: "claude-opus-4-7", maxTokens: 8192 })   // raise the cap
 | Flag | Default |
 | --- | --- |
 | `structuredOutput` | `true` (via Anthropic's native `output_config.format`) |
-| `vision` | Inferred from model name. `true` for Claude 3 / 3.5 / 3.7 / 4 family; `false` for pre-3 and unknown. |
-| `reasoning` | `true` — every modern Claude model accepts extended thinking. Override with `reasoning: false` for legacy/proxied targets that reject the `thinking` param. |
+| `vision` | Inferred from model name. `true` for Claude 3 / 3.5 / 3.7 / 4 and Claude 5-series (`claude-opus-5*`, `claude-sonnet-5*`, `claude-fable-5*`, `claude-mythos-5*`); `false` for pre-3 and unknown ids. |
+| `reasoning` | `true` — forwarded in the shape the model accepts (see [Extended thinking](#extended-thinking-reasoning)). Override with `reasoning: false` for legacy/proxied targets that reject the `thinking` param. |
 | `promptCaching` | `true` — the adapter places `cache_control` breakpoints and reports both cache reads (`Usage.cachedTokens`) and writes (`Usage.cacheWriteTokens`). |
 | `pdf` | `true` — the Messages API accepts PDF/document content blocks on vision-capable models. |
 | `audio` | absent (`false`) — Anthropic has no audio-input block, so the agent rejects audio attachments upfront. |
 
-Explicit config always wins (`structuredOutput`, `vision`, `reasoning`).
+Explicit config always wins (`structuredOutput`, `vision`, `reasoning`, `thinkingMode`).
 
 ## Pricing & cost
 
@@ -81,7 +81,7 @@ In streaming, `cachedTokens` / `cacheWriteTokens` are seeded from `message_start
 
 Unlike OpenAI, Anthropic **requires** `max_tokens` on every request. Resolution: per-call `options.maxTokens` > `config.maxTokens` > **default `4096`**. A caller who never sets a cap still gets a complete answer instead of a 400.
 
-With extended thinking enabled and no explicit cap, the adapter reserves answer room: `max_tokens = thinking budget + 4096`. An explicit `maxTokens` must be greater than the thinking budget or the call throws before it reaches Anthropic.
+With extended thinking enabled and no explicit cap, the adapter reserves answer room in both modes: `max_tokens = thinking budget + 4096`. In budget mode an explicit `maxTokens` must be greater than `budget_tokens` or the call throws before it reaches Anthropic.
 
 ## System prompt
 
@@ -100,18 +100,46 @@ When the agent passes `responseSchema` and the model is `structuredOutput`-capab
 
 ## Extended thinking (reasoning)
 
-When the model is `reasoning`-capable (default `true`) and the agent passes `options.reasoning`, the adapter forwards Anthropic extended thinking as `thinking: { type: "enabled", budget_tokens }`:
+When the model is `reasoning`-capable (default `true`) and the agent passes `options.reasoning`, the adapter forwards Anthropic thinking in one of two shapes, chosen per model (`thinkingMode`):
 
-- `reasoning.maxTokens` → `budget_tokens` verbatim.
-- `reasoning.effort` (`"low" | "medium" | "high"`) → a tiered budget (`1024` / `4096` / `12000`) when no explicit `maxTokens` is given.
-- Any resolved budget is floored at Anthropic's `1024`-token minimum.
-- `reasoning` with neither `effort` nor `maxTokens` emits nothing.
+| Mode | Models (inferred from the name) | Wire shape |
+| --- | --- | --- |
+| `"adaptive"` | Current Claude models — Opus 4.7 / 4.8 / 5 / 5.5, Sonnet 5 / 5.5, Fable 5 / 5.1 — **and any id the adapter does not recognise** | `thinking: { type: "adaptive" }` + `output_config.effort` |
+| `"budget"` | Haiku 4.5, Opus 4.6, Sonnet 4.6, and every older model (Claude 3.x, 4.0 / 4.1 / 4.5, 2, instant) | `thinking: { type: "enabled", budget_tokens }` |
 
-Because Anthropic 400s when `thinking` is combined with an explicit `temperature`, the adapter **drops `temperature`** for that request (thinking pins sampling to the default). Set `reasoning: false` on the model config to suppress the param entirely for proxied/legacy targets.
+Adaptive models reject `budget_tokens` with a 400, so the shape matters.
+
+- **Adaptive:** `reasoning.effort` (`"low" | "medium" | "high"`) → `output_config.effort` of the same name. With only `reasoning.maxTokens` set, effort is `"medium"`; `maxTokens` then only sizes the reserved `max_tokens` room, it is not sent as a budget.
+- **Budget:** `reasoning.maxTokens` → `budget_tokens` verbatim; `reasoning.effort` → a tiered budget (`1024` / `4096` / `12000`) when no `maxTokens` is given. Any resolved budget is floored at Anthropic's `1024` minimum.
+- `reasoning` with neither `effort` nor `maxTokens`, or `effort: "none"`, emits nothing.
+
+### `thinkingMode` override
+
+`anthropic.model({ name, thinkingMode: "adaptive" | "budget" })` beats the name-based detection. Use it when the id does not look like an Anthropic id: region-prefixed / Bedrock-style ids (`us.anthropic.claude-…`) and custom or gateway ids are *unrecognised*, so they default to adaptive. If they front an older model (Haiku 4.5, 4.6 or earlier) set `thinkingMode: "budget"`. It can also move Opus/Sonnet 4.6 onto adaptive. The `AnthropicThinkingMode` type is exported.
 
 ```ts
-await agent.execute("Prove it.", { reasoning: { effort: "high" } });   // budget_tokens: 12000
-await model.complete(messages, { reasoning: { maxTokens: 8000 } });     // budget_tokens: 8000
+import { AnthropicSDK, type AnthropicThinkingMode } from "@warlock.js/ai-anthropic";
+
+const anthropic = new AnthropicSDK({ apiKey: process.env.ANTHROPIC_API_KEY! });
+
+const mode: AnthropicThinkingMode = "budget";
+
+anthropic.model({ name: "claude-opus-5-5" });                             // adaptive (detected)
+anthropic.model({ name: "claude-haiku-4-5" });                            // budget (detected)
+anthropic.model({ name: "us.anthropic.claude-haiku-4-5", thinkingMode: mode }); // region-prefixed id of an older model
+anthropic.model({ name: "claude-sonnet-4-6", thinkingMode: "adaptive" }); // opt 4.6 into adaptive
+```
+
+### Temperature
+
+`temperature` is **not sent** to models after Opus 4.6 (adaptive mode) — they reject any non-default value with a 400. It is also dropped on any request that enables thinking, since Anthropic 400s on thinking plus an explicit temperature. So it is forwarded only in budget mode on requests without thinking; `thinkingMode` decides this too. Set `reasoning: false` on the model config to suppress the thinking param entirely for proxied/legacy targets.
+
+```ts
+await agent.execute("Prove it.", { reasoning: { effort: "high" } });
+// adaptive model: thinking { type: "adaptive" }, output_config.effort "high"
+// budget model:   thinking { type: "enabled", budget_tokens: 12000 }
+await model.complete(messages, { reasoning: { maxTokens: 8000 } });
+// adaptive model: effort "medium"; budget model: budget_tokens 8000
 ```
 
 When a thinking-enabled response also makes tool calls, its signed `thinking` and `redacted_thinking` blocks are retained in each call's `providerMetadata.anthropic.thinkingBlocks`. The adapter replays those opaque blocks automatically on the next assistant turn, preserving Anthropic's required signatures; application code should leave that metadata intact when persisting message history.
