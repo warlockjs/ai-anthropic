@@ -4,10 +4,9 @@
 
 > Generated artifact. Concatenates every SKILL.md and reference file under `@warlock.js/ai-anthropic/skills/`. Re-run `node scripts/generate-llms.mjs` after any change.
 
-## setup-anthropic `@warlock.js/ai-anthropic/setup-anthropic/SKILL.md`
+## setup-anthropic  `@warlock.js/ai-anthropic/setup-anthropic/SKILL.md`
 
 ---
-
 name: setup-anthropic
 description: 'Wire @warlock.js/ai-anthropic — new AnthropicSDK({apiKey, baseURL?, provider?}) for Claude, .model({name, vision?, structuredOutput?, reasoning?, thinkingMode?, promptCaching?, maxTokens?}). System-prompt hoisting, max_tokens required (default 4096), extended thinking via options.reasoning → adaptive thinking + output_config.effort (current/unknown models) or budget_tokens (Haiku 4.5, 4.6 and older; override with thinkingMode), prompt caching via promptCaching + options.cacheControl, cost-truth usage (cachedTokens/cacheWriteTokens), no first-party embeddings. Triggers: `AnthropicSDK`, `anthropic.model`, `anthropic.count`, `maxTokens`, `reasoning`, `thinking`, `budget_tokens`, `thinkingMode`, `adaptive`, `cacheControl`, `promptCaching`, `cachedTokens`, `cacheWriteTokens`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-7`; "wire claude into warlock agent", "configure anthropic provider", "use claude sonnet", "anthropic gateway baseURL", "claude extended thinking", "anthropic prompt caching cost"; typical import `import { AnthropicSDK } from "@warlock.js/ai-anthropic"`. Skip: embeddings — `@warlock.js/ai-openai/setup-openai/SKILL.md`; sibling adapters `@warlock.js/ai-openai`, `@warlock.js/ai-bedrock`, `@warlock.js/ai-google`, `@warlock.js/ai-ollama`; raw `@anthropic-ai/sdk`; Vercel `@ai-sdk/anthropic`.'
 ---
@@ -92,6 +91,8 @@ Unlike OpenAI, Anthropic **requires** `max_tokens` on every request. Resolution:
 
 With extended thinking enabled and no explicit cap, the adapter reserves answer room in both modes: `max_tokens = thinking budget + 4096`. In budget mode an explicit `maxTokens` must be greater than `budget_tokens` or the call throws before it reaches Anthropic.
 
+**Tiny caps + adaptive thinking:** thinking tokens count inside `max_tokens`, so a very small cap can be spent entirely on thinking. Live check: Sonnet 5.5 with `maxTokens: 60` returned `finishReason: "length"` and empty content. For tiny outputs give thinking room (raise `maxTokens`) or turn reasoning off (`reasoning: false` on the model, or no `options.reasoning`).
+
 ## System prompt
 
 Anthropic has no `"system"` role inside `messages`. The adapter hoists every neutral `role: "system"` message into the top-level `system` parameter (multiple system messages join with a blank line). Transparent to the agent.
@@ -169,7 +170,7 @@ default five-minute TTL; the one-hour cache has a higher write cost.
 Two independent breakpoint sites, both reported back via `usage.cachedTokens` / `usage.cacheWriteTokens`:
 
 - **Tools** — set `model({ promptCaching: true })` to mark the _last_ tool definition with `cache_control: ephemeral`. One breakpoint caches the whole tool prefix; off by default since a write costs ~1.25x and only pays off across multiple trips.
-- **System prompt** — a per-call `options.cacheControl.breakpoints >= 1` emits the system prompt as a `TextBlockParam` carrying `cache_control: ephemeral` (the longest stable prefix on a turn). Without the hint the system prompt stays a plain string (uncached), so a one-shot call never pays the write surcharge. No system prompt → no block.
+- **System prompt** — a per-call `options.cacheControl.breakpoints >= 1` emits the system prompt as a `TextBlockParam` carrying `cache_control: ephemeral` (the longest stable prefix on a turn). Without the hint the system prompt stays a plain string with no marker of its own, but with `promptCaching: true` the automatic request-level marker still caches the longest reusable prefix, system prompt included (a live check read back 10,090 cached tokens of a large system prompt on the second call). With `promptCaching` off and no hint, nothing is cached, so a one-shot call never pays the write surcharge. A system prompt with per-turn placeholders changes the prefix each turn: write surcharge, no reads. No system prompt → no block.
 
 ```ts
 await agent.execute("…", { cacheControl: { breakpoints: 1 } }); // cache the system prefix
@@ -226,3 +227,5 @@ Anthropic ships no first-party embeddings API, so `AnthropicSDK` intentionally d
 - [`@warlock.js/ai/run-ai-agent/SKILL.md`](@warlock.js/ai/run-ai-agent/SKILL.md)
 - [`@warlock.js/ai/pick-ai-provider/SKILL.md`](@warlock.js/ai/pick-ai-provider/SKILL.md)
 - [`@warlock.js/ai/handle-ai-errors/SKILL.md`](@warlock.js/ai/handle-ai-errors/SKILL.md)
+
+

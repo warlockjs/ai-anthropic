@@ -83,6 +83,8 @@ Unlike OpenAI, Anthropic **requires** `max_tokens` on every request. Resolution:
 
 With extended thinking enabled and no explicit cap, the adapter reserves answer room in both modes: `max_tokens = thinking budget + 4096`. In budget mode an explicit `maxTokens` must be greater than `budget_tokens` or the call throws before it reaches Anthropic.
 
+**Tiny caps + adaptive thinking:** thinking tokens count inside `max_tokens`, so a very small cap can be spent entirely on thinking. Live check: Sonnet 5.5 with `maxTokens: 60` returned `finishReason: "length"` and empty content. For tiny outputs give thinking room (raise `maxTokens`) or turn reasoning off (`reasoning: false` on the model, or no `options.reasoning`).
+
 ## System prompt
 
 Anthropic has no `"system"` role inside `messages`. The adapter hoists every neutral `role: "system"` message into the top-level `system` parameter (multiple system messages join with a blank line). Transparent to the agent.
@@ -160,7 +162,7 @@ default five-minute TTL; the one-hour cache has a higher write cost.
 Two independent breakpoint sites, both reported back via `usage.cachedTokens` / `usage.cacheWriteTokens`:
 
 - **Tools** — set `model({ promptCaching: true })` to mark the _last_ tool definition with `cache_control: ephemeral`. One breakpoint caches the whole tool prefix; off by default since a write costs ~1.25x and only pays off across multiple trips.
-- **System prompt** — a per-call `options.cacheControl.breakpoints >= 1` emits the system prompt as a `TextBlockParam` carrying `cache_control: ephemeral` (the longest stable prefix on a turn). Without the hint the system prompt stays a plain string (uncached), so a one-shot call never pays the write surcharge. No system prompt → no block.
+- **System prompt** — a per-call `options.cacheControl.breakpoints >= 1` emits the system prompt as a `TextBlockParam` carrying `cache_control: ephemeral` (the longest stable prefix on a turn). Without the hint the system prompt stays a plain string with no marker of its own, but with `promptCaching: true` the automatic request-level marker still caches the longest reusable prefix, system prompt included (a live check read back 10,090 cached tokens of a large system prompt on the second call). With `promptCaching` off and no hint, nothing is cached, so a one-shot call never pays the write surcharge. A system prompt with per-turn placeholders changes the prefix each turn: write surcharge, no reads. No system prompt → no block.
 
 ```ts
 await agent.execute("…", { cacheControl: { breakpoints: 1 } }); // cache the system prefix

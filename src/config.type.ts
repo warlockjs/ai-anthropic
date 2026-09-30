@@ -77,13 +77,15 @@ export type AnthropicModelConfig = ModelConfig & {
    * Off by default: a cache *write* costs ~1.25x, so it only pays off
    * when the cached prefix is read at least twice (multi-trip agents).
    * A one-shot agent with no tools is unaffected — no tools, no marker,
-   * no surcharge. The system prompt is intentionally NOT cached here:
-   * it carries per-turn placeholders, so a breakpoint there would pay
-   * the write surcharge every turn with no reads.
+   * no surcharge. The automatic marker caches the longest reusable
+   * prefix, which includes the system prompt (a large stable system
+   * prompt is read back from cache on the next call). A system prompt
+   * with per-turn placeholders changes the prefix each turn, so it
+   * pays the write surcharge without reads.
    *
-   * Independent of this flag, a per-call
-   * `ModelCallOptions.cacheControl.breakpoints` still places a cache
-   * breakpoint on the system prompt — that hint is opt-in per request.
+   * Explicit per-call `ModelCallOptions.cacheControl.breakpoints`
+   * behave as before: they place a breakpoint on the system prompt and
+   * replace the automatic request-level marker.
    */
   promptCaching?: boolean;
   /**
