@@ -2,6 +2,14 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
 import { AnthropicModel } from "./model";
 
+/** The first recorded request; fails the test when none was made. */
+function firstCall<T>(calls: readonly T[]): T {
+  const call = calls[0];
+  if (call === undefined) throw new Error("expected the fake client to have been called");
+  return call;
+}
+
+
 type CreateCall = { params: Anthropic.MessageCreateParams; requestOptions: unknown };
 
 /**
@@ -95,12 +103,12 @@ describe("AnthropicModel.complete()", () => {
       { role: "user", content: "hi" },
     ]);
 
-    expect(calls[0].params.model).toBe("claude-sonnet-4-6");
-    expect(calls[0].params.max_tokens).toBe(4096);
-    expect(calls[0].params.temperature).toBe(0.4);
-    expect(calls[0].params.system).toBe("Be concise.");
-    expect(calls[0].params.messages).toEqual([{ role: "user", content: "hi" }]);
-    expect(calls[0].params.stream).toBe(false);
+    expect(firstCall(calls).params.model).toBe("claude-sonnet-4-6");
+    expect(firstCall(calls).params.max_tokens).toBe(4096);
+    expect(firstCall(calls).params.temperature).toBe(0.4);
+    expect(firstCall(calls).params.system).toBe("Be concise.");
+    expect(firstCall(calls).params.messages).toEqual([{ role: "user", content: "hi" }]);
+    expect(firstCall(calls).params.stream).toBe(false);
   });
 
   it("config maxTokens overrides the default and per-call options override config", async () => {
@@ -112,7 +120,7 @@ describe("AnthropicModel.complete()", () => {
     });
 
     await model.complete([{ role: "user", content: "hi" }]);
-    expect(calls[0].params.max_tokens).toBe(512);
+    expect(firstCall(calls).params.max_tokens).toBe(512);
 
     await model.complete([{ role: "user", content: "hi" }], { maxTokens: 64, temperature: 0.9 });
     expect(calls[1].params.max_tokens).toBe(64);
@@ -246,7 +254,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { responseSchema: schema });
 
-    expect((calls[0].params as { output_config?: unknown }).output_config).toEqual({
+    expect((firstCall(calls).params as { output_config?: unknown }).output_config).toEqual({
       format: { type: "json_schema", schema },
     });
   });
@@ -258,7 +266,7 @@ describe("AnthropicModel.complete()", () => {
     await model.complete([{ role: "user", content: "hi" }], {
       responseSchema: { type: "array", items: { type: "string" } },
     });
-    expect((calls[0].params as { output_config?: unknown }).output_config).toBeUndefined();
+    expect((firstCall(calls).params as { output_config?: unknown }).output_config).toBeUndefined();
 
     const noStruct = new AnthropicModel(client, {
       name: "claude-sonnet-4-6",
@@ -285,10 +293,10 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect("temperature" in calls[0].params).toBe(false);
-    expect("system" in calls[0].params).toBe(false);
-    expect("tools" in calls[0].params).toBe(false);
-    expect("output_config" in calls[0].params).toBe(false);
+    expect("temperature" in firstCall(calls).params).toBe(false);
+    expect("system" in firstCall(calls).params).toBe(false);
+    expect("tools" in firstCall(calls).params).toBe(false);
+    expect("output_config" in firstCall(calls).params).toBe(false);
   });
 
   it("treats a configured temperature of 0 as present (not omitted by falsy check)", async () => {
@@ -297,7 +305,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect(calls[0].params.temperature).toBe(0);
+    expect(firstCall(calls).params.temperature).toBe(0);
   });
 
   it("treats a per-call maxTokens of 0 as present (overrides config and default)", async () => {
@@ -306,7 +314,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { maxTokens: 0 });
 
-    expect(calls[0].params.max_tokens).toBe(0);
+    expect(firstCall(calls).params.max_tokens).toBe(0);
   });
 
   it("forwards the AbortSignal as the request's second argument", async () => {
@@ -316,7 +324,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { signal: controller.signal });
 
-    expect(calls[0].requestOptions).toEqual({ signal: controller.signal });
+    expect(firstCall(calls).requestOptions).toEqual({ signal: controller.signal });
   });
 
   it("passes undefined request options when no signal is supplied", async () => {
@@ -325,7 +333,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect(calls[0].requestOptions).toBeUndefined();
+    expect(firstCall(calls).requestOptions).toBeUndefined();
   });
 
   it("forwards mapped tools onto the request body", async () => {
@@ -350,7 +358,7 @@ describe("AnthropicModel.complete()", () => {
       ] as never,
     });
 
-    expect(calls[0].params.tools).toEqual([
+    expect(firstCall(calls).params.tools).toEqual([
       { name: "ping", description: "ping tool", input_schema: { type: "object", properties: {} } },
     ]);
   });
@@ -605,7 +613,7 @@ describe("AnthropicModel.complete()", () => {
       reasoning: { maxTokens: 8000 },
     });
 
-    expect((calls[0].params as { thinking?: unknown }).thinking).toEqual({
+    expect((firstCall(calls).params as { thinking?: unknown }).thinking).toEqual({
       type: "enabled",
       budget_tokens: 8000,
     });
@@ -631,7 +639,7 @@ describe("AnthropicModel.complete()", () => {
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort: "low" } });
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort: "high" } });
 
-    expect((calls[0].params as { thinking?: { budget_tokens?: number } }).thinking).toEqual({
+    expect((firstCall(calls).params as { thinking?: { budget_tokens?: number } }).thinking).toEqual({
       type: "enabled",
       budget_tokens: 1024,
     });
@@ -654,7 +662,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort } });
 
-    expect((calls[0].params as { thinking?: unknown }).thinking).toEqual({
+    expect((firstCall(calls).params as { thinking?: unknown }).thinking).toEqual({
       type: "enabled",
       budget_tokens,
     });
@@ -666,7 +674,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { maxTokens: 200 } });
 
-    expect((calls[0].params as { thinking?: { budget_tokens?: number } }).thinking).toEqual({
+    expect((firstCall(calls).params as { thinking?: { budget_tokens?: number } }).thinking).toEqual({
       type: "enabled",
       budget_tokens: 1024,
     });
@@ -678,8 +686,8 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { maxTokens: 2000 } });
 
-    expect("temperature" in calls[0].params).toBe(false);
-    expect((calls[0].params as { thinking?: unknown }).thinking).toBeDefined();
+    expect("temperature" in firstCall(calls).params).toBe(false);
+    expect((firstCall(calls).params as { thinking?: unknown }).thinking).toBeDefined();
   });
 
   it("omits thinking when reasoning capability is disabled", async () => {
@@ -688,7 +696,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { maxTokens: 4000 } });
 
-    expect("thinking" in calls[0].params).toBe(false);
+    expect("thinking" in firstCall(calls).params).toBe(false);
   });
 
   it("omits thinking when reasoning has neither effort nor maxTokens", async () => {
@@ -697,8 +705,8 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: {} });
 
-    expect("thinking" in calls[0].params).toBe(false);
-    expect(calls[0].params.temperature).toBeUndefined();
+    expect("thinking" in firstCall(calls).params).toBe(false);
+    expect(firstCall(calls).params.temperature).toBeUndefined();
   });
 
   it("omits thinking when effort is 'none' (explicit reasoning-off)", async () => {
@@ -709,7 +717,7 @@ describe("AnthropicModel.complete()", () => {
       reasoning: { effort: "none" },
     });
 
-    expect("thinking" in calls[0].params).toBe(false);
+    expect("thinking" in firstCall(calls).params).toBe(false);
   });
 
   it("treats effort 'none' as authoritative over an explicit maxTokens", async () => {
@@ -720,7 +728,7 @@ describe("AnthropicModel.complete()", () => {
       reasoning: { effort: "none", maxTokens: 8000 },
     });
 
-    expect("thinking" in calls[0].params).toBe(false);
+    expect("thinking" in firstCall(calls).params).toBe(false);
   });
 
   it("places a cache_control breakpoint on the system prompt when breakpoints >= 1", async () => {
@@ -735,7 +743,7 @@ describe("AnthropicModel.complete()", () => {
       { cacheControl: { breakpoints: 1 } },
     );
 
-    expect(calls[0].params.system).toEqual([
+    expect(firstCall(calls).params.system).toEqual([
       { type: "text", text: "Be concise.", cache_control: { type: "ephemeral" } },
     ]);
   });
@@ -746,7 +754,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect(calls[0].params.cache_control).toEqual({ type: "ephemeral" });
+    expect(firstCall(calls).params.cache_control).toEqual({ type: "ephemeral" });
   });
 
   it("uses the configured cache TTL for automatic and explicit cache breakpoints", async () => {
@@ -766,7 +774,7 @@ describe("AnthropicModel.complete()", () => {
       { cacheControl: { breakpoints: 1 } },
     );
 
-    expect(calls[0].params.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(firstCall(calls).params.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
     expect(calls[1].params.cache_control).toBeUndefined();
     expect(calls[1].params.system).toEqual([
       { type: "text", text: "Be concise.", cache_control: { type: "ephemeral", ttl: "1h" } },
@@ -779,7 +787,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }]);
 
-    expect(calls[0].params.cache_control).toBeUndefined();
+    expect(firstCall(calls).params.cache_control).toBeUndefined();
   });
 
   it("leaves the system prompt a plain string when no cache breakpoint is requested", async () => {
@@ -791,7 +799,7 @@ describe("AnthropicModel.complete()", () => {
       { role: "user", content: "hi" },
     ]);
 
-    expect(calls[0].params.system).toBe("Be concise.");
+    expect(firstCall(calls).params.system).toBe("Be concise.");
   });
 
   it("does not emit a system block for a cache breakpoint when there is no system prompt", async () => {
@@ -800,7 +808,7 @@ describe("AnthropicModel.complete()", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { cacheControl: { breakpoints: 2 } });
 
-    expect("system" in calls[0].params).toBe(false);
+    expect("system" in firstCall(calls).params).toBe(false);
   });
 });
 
@@ -1142,14 +1150,14 @@ describe("AnthropicModel.stream()", () => {
       ),
     );
 
-    expect((calls[0].params as { thinking?: unknown }).thinking).toEqual({
+    expect((firstCall(calls).params as { thinking?: unknown }).thinking).toEqual({
       type: "enabled",
       budget_tokens: 4096,
     });
-    expect(calls[0].params.system).toEqual([
+    expect(firstCall(calls).params.system).toEqual([
       { type: "text", text: "Stay terse.", cache_control: { type: "ephemeral" } },
     ]);
-    expect(calls[0].params.stream).toBe(true);
+    expect(firstCall(calls).params.stream).toBe(true);
   });
 
   it("forwards the AbortSignal to the streaming request", async () => {
@@ -1166,8 +1174,8 @@ describe("AnthropicModel.stream()", () => {
       model.stream([{ role: "user", content: "hi" }], { signal: controller.signal }),
     );
 
-    expect(calls[0].params.stream).toBe(true);
-    expect(calls[0].requestOptions).toEqual({ signal: controller.signal });
+    expect(firstCall(calls).params.stream).toBe(true);
+    expect(firstCall(calls).requestOptions).toEqual({ signal: controller.signal });
   });
 
   it("interleaves two tool_use blocks at different indexes into two tool-calls", async () => {
@@ -1348,7 +1356,7 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort: "high" } });
 
-    const params = calls[0].params as WireParams;
+    const params = firstCall(calls).params as WireParams;
 
     expect(params.thinking).toEqual({ type: "adaptive" });
     expect(params.output_config).toEqual({ effort: "high" });
@@ -1369,7 +1377,7 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort } });
 
-    expect((calls[0].params as WireParams).output_config).toEqual({ effort: expected });
+    expect((firstCall(calls).params as WireParams).output_config).toEqual({ effort: expected });
   });
 
   it("defaults the effort to medium when an adaptive model gets only reasoning.maxTokens", async () => {
@@ -1378,7 +1386,7 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { maxTokens: 8000 } });
 
-    const params = calls[0].params as WireParams;
+    const params = firstCall(calls).params as WireParams;
 
     expect(params.thinking).toEqual({ type: "adaptive" });
     expect(params.output_config).toEqual({ effort: "medium" });
@@ -1395,7 +1403,7 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
       responseSchema: schema,
     });
 
-    expect((calls[0].params as WireParams).output_config).toEqual({
+    expect((firstCall(calls).params as WireParams).output_config).toEqual({
       format: { type: "json_schema", schema },
       effort: "low",
     });
@@ -1428,7 +1436,7 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
       reasoning: { maxTokens: 8000 },
     });
 
-    expect(calls[0].params.max_tokens).toBe(2000);
+    expect(firstCall(calls).params.max_tokens).toBe(2000);
   });
 
   it("keeps budget_tokens and no output_config for a budget-mode model", async () => {
@@ -1437,10 +1445,10 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort: "high" } });
 
-    const params = calls[0].params as WireParams;
+    const params = firstCall(calls).params as WireParams;
 
     expect(params.thinking).toEqual({ type: "enabled", budget_tokens: 12000 });
-    expect("output_config" in calls[0].params).toBe(false);
+    expect("output_config" in firstCall(calls).params).toBe(false);
   });
 
   it("omits thinking and output_config on an adaptive model for effort 'none'", async () => {
@@ -1449,8 +1457,8 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
 
     await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort: "none" } });
 
-    expect("thinking" in calls[0].params).toBe(false);
-    expect("output_config" in calls[0].params).toBe(false);
+    expect("thinking" in firstCall(calls).params).toBe(false);
+    expect("output_config" in firstCall(calls).params).toBe(false);
   });
 
   it("omits temperature for a post-4.6 model even without thinking", async () => {
@@ -1460,7 +1468,7 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
     await model.complete([{ role: "user", content: "hi" }]);
     await model.complete([{ role: "user", content: "hi" }], { temperature: 0.9 });
 
-    expect("temperature" in calls[0].params).toBe(false);
+    expect("temperature" in firstCall(calls).params).toBe(false);
     expect("temperature" in calls[1].params).toBe(false);
   });
 
@@ -1496,7 +1504,7 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
       reasoning: { effort: "high" },
     });
 
-    expect((calls[0].params as WireParams).thinking).toEqual({
+    expect((firstCall(calls).params as WireParams).thinking).toEqual({
       type: "enabled",
       budget_tokens: 1024,
     });
@@ -1554,13 +1562,13 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
     );
     await collectStream(model.stream([{ role: "user", content: "hi" }]));
 
-    const first = calls[0].params as WireParams;
+    const first = firstCall(calls).params as WireParams;
 
     expect(first.stream).toBe(true);
     expect(first.thinking).toEqual({ type: "adaptive" });
     expect(first.output_config).toEqual({ effort: "low" });
     expect(JSON.stringify(first)).not.toContain("budget_tokens");
-    expect("temperature" in calls[0].params).toBe(false);
+    expect("temperature" in firstCall(calls).params).toBe(false);
     expect("temperature" in calls[1].params).toBe(false);
   });
 
@@ -1578,11 +1586,11 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
     );
     await collectStream(model.stream([{ role: "user", content: "hi" }]));
 
-    expect((calls[0].params as WireParams).thinking).toEqual({
+    expect((firstCall(calls).params as WireParams).thinking).toEqual({
       type: "enabled",
       budget_tokens: 4096,
     });
-    expect("output_config" in calls[0].params).toBe(false);
+    expect("output_config" in firstCall(calls).params).toBe(false);
     expect(calls[1].params.temperature).toBe(0.5);
   });
 

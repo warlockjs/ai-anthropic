@@ -592,7 +592,11 @@ export class AnthropicModel implements ModelContract {
 
     if (this.config.promptCaching && mapped.length > 0) {
       const last = mapped.length - 1;
-      mapped[last] = { ...mapped[last], cache_control: this.cacheControl() };
+      const lastTool = mapped[last];
+
+      if (lastTool) {
+        mapped[last] = { ...lastTool, cache_control: this.cacheControl() };
+      }
     }
 
     return { tools: mapped };
