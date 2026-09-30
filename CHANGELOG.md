@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Claude reasoning-token usage is now included in responses when the API reports it, including streamed responses.
+- Responses stopped because the model context window was exceeded now report a length finish reason.
 - **Behaviour change:** Reasoning now works on current Claude models. Claude Opus 4.7, 4.8, 5 and 5.5, Sonnet 5 and 5.5, Fable 5 and 5.1, and any model id the adapter does not recognise now get `thinking: { type: "adaptive" }` with `output_config.effort` (`low`, `medium` or `high`, taken from `reasoning.effort`; `medium` when only `reasoning.maxTokens` is given). Before, every model got `budget_tokens`, which these models reject with a 400. Claude Haiku 4.5, Opus 4.6, Sonnet 4.6 and older models keep the `budget_tokens` shape. The default `max_tokens` is unchanged in both modes.
 - **Behaviour change:** `temperature` is no longer sent to models released after Claude Opus 4.6 (the same adaptive-thinking models listed above), because they reject any value other than the default with a 400. Haiku 4.5, the 4.6 models and older models still receive it.
 - **Behaviour change:** Claude 5-series models (`claude-opus-5*`, `claude-sonnet-5*`, `claude-fable-5*`, `claude-mythos-5*`) are now recognised as vision-capable, so image attachments are no longer rejected for them.
@@ -67,6 +69,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Lockstep release maintenance and dependency refresh.
+
 ## 5.20.0 - 2026-09-24
 
 ### Changed

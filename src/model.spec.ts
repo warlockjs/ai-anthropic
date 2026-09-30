@@ -459,8 +459,36 @@ describe("AnthropicModel.complete()", () => {
     expect(result.usage).toEqual({ input: 0, output: 0, total: 0 });
   });
 
+  it("surfaces Anthropic thinking tokens as reasoningTokens when reported", async () => {
+    const { client } = makeFakeClient({
+      message: message({
+        usage: {
+          input_tokens: 10,
+          output_tokens: 14,
+          output_tokens_details: { thinking_tokens: 9 },
+        } as Anthropic.Usage,
+      }),
+    });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    const result = await model.complete([{ role: "user", content: "hi" }]);
+
+    expect(result.usage).toEqual({ input: 10, output: 14, total: 24, reasoningTokens: 9 });
+  });
+
   it("maps max_tokens stop_reason to the 'length' finish reason", async () => {
     const { client } = makeFakeClient({ message: message({ stop_reason: "max_tokens" }) });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    const result = await model.complete([{ role: "user", content: "hi" }]);
+
+    expect(result.finishReason).toBe("length");
+  });
+
+  it("maps model_context_window_exceeded stop_reason to the 'length' finish reason", async () => {
+    const { client } = makeFakeClient({
+      message: message({ stop_reason: "model_context_window_exceeded" }),
+    });
     const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
 
     const result = await model.complete([{ role: "user", content: "hi" }]);
@@ -743,6 +771,37 @@ describe("AnthropicModel.stream()", () => {
     expect(done).toEqual({
       finishReason: "stop",
       usage: { input: 9, output: 4, total: 13 },
+    });
+  });
+
+  it("surfaces cumulative thinking tokens as reasoningTokens in done", async () => {
+    const { client } = makeFakeClient({
+      streamEvents: [
+        {
+          type: "message_start",
+          message: {
+            usage: {
+              input_tokens: 9,
+              output_tokens_details: { thinking_tokens: 2 },
+            },
+          },
+        },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "end_turn" },
+          usage: { output_tokens: 8, output_tokens_details: { thinking_tokens: 5 } },
+        },
+        { type: "message_stop" },
+      ] as unknown as Anthropic.RawMessageStreamEvent[],
+    });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    const chunks = await collectStream(model.stream([{ role: "user", content: "hi" }]));
+
+    expect(chunks.at(-1)).toEqual({
+      type: "done",
+      finishReason: "stop",
+      usage: { input: 9, output: 8, total: 17, reasoningTokens: 5 },
     });
   });
 

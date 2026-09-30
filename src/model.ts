@@ -262,6 +262,12 @@ export class AnthropicModel implements ModelContract {
         if (event.type === "message_start") {
           usage.input = event.message.usage.input_tokens ?? 0;
 
+          const thinkingTokens = event.message.usage.output_tokens_details?.thinking_tokens;
+
+          if (thinkingTokens !== null && thinkingTokens !== undefined) {
+            usage.reasoningTokens = thinkingTokens;
+          }
+
           const cacheRead = event.message.usage.cache_read_input_tokens;
 
           if (cacheRead !== null && cacheRead !== undefined && cacheRead > 0) {
@@ -343,6 +349,12 @@ export class AnthropicModel implements ModelContract {
           rawStopReason = event.delta.stop_reason ?? rawStopReason;
           usage.output = event.usage.output_tokens ?? usage.output;
 
+          const thinkingTokens = event.usage.output_tokens_details?.thinking_tokens;
+
+          if (thinkingTokens !== null && thinkingTokens !== undefined) {
+            usage.reasoningTokens = thinkingTokens;
+          }
+
           // `message_delta.usage` carries the cumulative cache counts —
           // prefer them over the `message_start` snapshot when present
           // and non-zero so the terminal `done` reflects the final tally.
@@ -411,7 +423,11 @@ export class AnthropicModel implements ModelContract {
     const sendTemperature =
       temperature !== undefined && !thinking.thinking && acceptsTemperature(this.thinkingMode);
 
-    if (thinkingBudget !== undefined && configuredMaxTokens !== undefined && configuredMaxTokens <= thinkingBudget) {
+    if (
+      thinkingBudget !== undefined &&
+      configuredMaxTokens !== undefined &&
+      configuredMaxTokens <= thinkingBudget
+    ) {
       throw new Error(
         `Anthropic maxTokens (${configuredMaxTokens}) must be greater than thinking budget_tokens (${thinkingBudget})`,
       );
@@ -616,9 +632,7 @@ export class AnthropicModel implements ModelContract {
    * `ModelToolCallRequest[]`. Returns `undefined` when the model
    * requested no tools so callers can branch on presence.
    */
-  private extractToolCalls(
-    content: Anthropic.ContentBlock[],
-  ): ModelToolCallRequest[] | undefined {
+  private extractToolCalls(content: Anthropic.ContentBlock[]): ModelToolCallRequest[] | undefined {
     const toolUses = content.filter(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
     );
@@ -641,9 +655,9 @@ export class AnthropicModel implements ModelContract {
    * Preserve Anthropic's opaque extended-thinking blocks beside a tool
    * request so the next assistant turn can replay their signatures exactly.
    */
-  private buildThinkingMetadata(
-    blocks: Iterable<Anthropic.ContentBlock>,
-  ): { providerMetadata?: Record<string, unknown> } {
+  private buildThinkingMetadata(blocks: Iterable<Anthropic.ContentBlock>): {
+    providerMetadata?: Record<string, unknown>;
+  } {
     const thinkingBlocks = Array.from(blocks).filter(
       (block): block is AnthropicThinkingBlock =>
         block.type === "thinking" || block.type === "redacted_thinking",
@@ -661,18 +675,17 @@ export class AnthropicModel implements ModelContract {
    * Anthropic reports `input_tokens` / `output_tokens` separately with
    * no pre-summed total, so `total` is computed. Cache-read tokens are
    * surfaced as `cachedTokens` and cache-write tokens as
-   * `cacheWriteTokens`, each only when non-zero.
-   *
-   * Note: Anthropic does not report a separate reasoning-token count —
-   * extended-thinking tokens are billed inside `output_tokens` — so
-   * `Usage.reasoningTokens` is intentionally left unset here. Populating
-   * it would double-count against `output`.
+   * `cacheWriteTokens`, each only when non-zero. Anthropic also reports
+   * `output_tokens_details.thinking_tokens` as the reasoning subset of
+   * its inclusive `output_tokens`; it is surfaced as `reasoningTokens`
+   * when present, without changing the billing total.
    */
   private extractUsage(raw: Anthropic.Usage): Usage {
     const input = raw.input_tokens ?? 0;
     const output = raw.output_tokens ?? 0;
     const cacheRead = raw.cache_read_input_tokens;
     const cacheWrite = raw.cache_creation_input_tokens;
+    const thinkingTokens = raw.output_tokens_details?.thinking_tokens;
 
     return {
       input,
@@ -683,6 +696,9 @@ export class AnthropicModel implements ModelContract {
         : {}),
       ...(cacheWrite !== null && cacheWrite !== undefined && cacheWrite > 0
         ? { cacheWriteTokens: cacheWrite }
+        : {}),
+      ...(thinkingTokens !== null && thinkingTokens !== undefined
+        ? { reasoningTokens: thinkingTokens }
         : {}),
     };
   }

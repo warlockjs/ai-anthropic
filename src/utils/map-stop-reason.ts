@@ -4,14 +4,16 @@ const stopReasonMap: Record<string, FinishReason> = {
   end_turn: "stop",
   stop_sequence: "stop",
   max_tokens: "length",
+  model_context_window_exceeded: "length",
   tool_use: "tool_calls",
 };
 
 /**
  * Map Anthropic's `stop_reason` to the normalized `FinishReason` union.
  *
- * `end_turn` / `stop_sequence` are both natural stops. `max_tokens`
- * maps to `length`. `tool_use` maps to `tool_calls`. Everything else —
+ * `end_turn` / `stop_sequence` are both natural stops. `max_tokens` and
+ * `model_context_window_exceeded` map to `length`. `tool_use` maps to
+ * `tool_calls`. Everything else —
  * `refusal` (policy intervention), `pause_turn` (incomplete
  * long-running turn), `null`, or any value a future API version adds —
  * falls through to `"error"` so the agent treats the trip as a

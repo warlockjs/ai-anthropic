@@ -7,8 +7,9 @@ describe("mapStopReason", () => {
     expect(mapStopReason("stop_sequence")).toBe("stop");
   });
 
-  it("maps max_tokens to 'length'", () => {
+  it("maps max_tokens and model_context_window_exceeded to 'length'", () => {
     expect(mapStopReason("max_tokens")).toBe("length");
+    expect(mapStopReason("model_context_window_exceeded")).toBe("length");
   });
 
   it("maps tool_use to 'tool_calls'", () => {
