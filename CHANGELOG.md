@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Adaptive Claude reasoning now maps `minimal` to `output_config.effort: "low"` and supports `xhigh` and `max`; budget-mode models map them to 1,024, 24,000, and 32,000 thinking tokens respectively.
 - Claude reasoning-token usage is now included in responses when the API reports it, including streamed responses.
 - Responses stopped because the model context window was exceeded now report a length finish reason.
 - **Behaviour change:** Reasoning now works on current Claude models. Claude Opus 4.7, 4.8, 5 and 5.5, Sonnet 5 and 5.5, Fable 5 and 5.1, and any model id the adapter does not recognise now get `thinking: { type: "adaptive" }` with `output_config.effort` (`low`, `medium` or `high`, taken from `reasoning.effort`; `medium` when only `reasoning.maxTokens` is given). Before, every model got `budget_tokens`, which these models reject with a 400. Claude Haiku 4.5, Opus 4.6, Sonnet 4.6 and older models keep the `budget_tokens` shape. The default `max_tokens` is unchanged in both modes.

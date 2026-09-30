@@ -641,6 +641,25 @@ describe("AnthropicModel.complete()", () => {
     });
   });
 
+  it.each([
+    ["minimal", 1024],
+    ["xhigh", 24000],
+    ["max", 32000],
+    ["low", 1024],
+    ["medium", 4096],
+    ["high", 12000],
+  ] as const)("maps budget-mode effort %s to %i thinking tokens", async (effort, budget_tokens) => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
+
+    await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort } });
+
+    expect((calls[0].params as { thinking?: unknown }).thinking).toEqual({
+      type: "enabled",
+      budget_tokens,
+    });
+  });
+
   it("floors a sub-minimum thinking budget at 1024 tokens", async () => {
     const { client, calls } = makeFakeClient({ message: message() });
     const model = new AnthropicModel(client, { name: "claude-sonnet-4-6" });
@@ -1335,6 +1354,22 @@ describe("AnthropicModel per-model thinking and temperature rules", () => {
     expect(params.output_config).toEqual({ effort: "high" });
     // Same answer headroom as the budget path today: high budget (12000) + 4096.
     expect(params.max_tokens).toBe(16096);
+  });
+
+  it.each([
+    ["minimal", "low"],
+    ["xhigh", "xhigh"],
+    ["max", "max"],
+    ["low", "low"],
+    ["medium", "medium"],
+    ["high", "high"],
+  ] as const)("clamps adaptive effort %s to Anthropic %s", async (effort, expected) => {
+    const { client, calls } = makeFakeClient({ message: message() });
+    const model = new AnthropicModel(client, { name: "claude-opus-5-5" });
+
+    await model.complete([{ role: "user", content: "hi" }], { reasoning: { effort } });
+
+    expect((calls[0].params as WireParams).output_config).toEqual({ effort: expected });
   });
 
   it("defaults the effort to medium when an adaptive model gets only reasoning.maxTokens", async () => {

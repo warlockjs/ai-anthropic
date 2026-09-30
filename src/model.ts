@@ -58,25 +58,36 @@ const DEFAULT_THINKING_EFFORT: ThinkingEffort = "medium";
  *   has always produced.
  */
 const EFFORT_THINKING_BUDGET: Record<ThinkingEffort, number> = {
+  // Anthropic's adaptive output config has no `minimal`; keep the minimum
+  // budget for it in legacy budget mode too.
+  minimal: 1024,
   low: 1024,
   medium: 4096,
   high: 12000,
+  // Keep the tiers monotonic for older budget-mode models. Explicit
+  // reasoning.maxTokens still wins and the existing max_tokens validation
+  // remains authoritative.
+  xhigh: 24000,
+  max: 32000,
 };
 
 /**
  * Map the neutral `ReasoningEffort` level to Anthropic's
  * `output_config.effort` for adaptive-mode models. The installed SDK
  * accepts `low | medium | high | xhigh | max` (`OutputConfig.effort`,
- * `messages.d.ts:800`); the neutral enum's three levels map 1:1 onto the
- * same names. `xhigh` / `max` have no neutral equivalent yet.
+ * `messages.ts:2767`); map every supported value 1:1 and clamp `minimal` to
+ * the nearest accepted value, `low`.
  */
 const EFFORT_TO_OUTPUT_EFFORT: Record<
   ThinkingEffort,
   NonNullable<Anthropic.OutputConfig["effort"]>
 > = {
+  minimal: "low",
   low: "low",
   medium: "medium",
   high: "high",
+  xhigh: "xhigh",
+  max: "max",
 };
 
 type AnthropicThinkingBlock = Anthropic.ThinkingBlock | Anthropic.RedactedThinkingBlock;
